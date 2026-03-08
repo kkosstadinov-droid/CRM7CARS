@@ -1,0 +1,182 @@
+﻿@import "tailwindcss";
+
+:root {
+  --bg: #f4f4f5;
+  --panel: #ffffff;
+  --border: #e5e7eb;
+  --text: #1b1b1b;
+  --text-soft: #60606b;
+  --gold: #b98e10;
+  --gold-soft: #fff0bc;
+  --gold-deep: #5a4202;
+  --navy: #0d1242;
+  --accent: #ff451c;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at 5% -20%, #fff0bc 0%, #f8f8fa 35%, #eef1f8 100%);
+  color: var(--text);
+  font-family: var(--font-sofia-sans), system-ui, sans-serif;
+}
+
+h1,
+h2,
+h3,
+.brand-title {
+  font-family: var(--font-halvar), var(--font-sofia-sans), sans-serif;
+  letter-spacing: 0.01em;
+}
+
+.card {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 14px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.04);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.badge-red {
+  background: #ffece8;
+  color: #ad2f11;
+  border-color: #ffc6ba;
+}
+
+.badge-blue {
+  background: #e8ecff;
+  color: var(--navy);
+  border-color: #cbd5ff;
+}
+
+.badge-green {
+  background: #ecf8e5;
+  color: #406812;
+  border-color: #d1efbd;
+}
+
+.brand-chip {
+  background: linear-gradient(-45deg, var(--gold-soft), var(--gold-deep) 83%, #e2c87b);
+  color: #fff;
+  border-color: transparent;
+}
+
+.brand-btn {
+  border-radius: 10px;
+  color: #fff;
+  font-weight: 700;
+  background-image: linear-gradient(-45deg, var(--gold-soft), var(--gold-deep) 83%, #e2c87b);
+  background-size: 180% auto;
+  transition: background-position 0.25s ease;
+}
+
+.brand-btn:hover {
+  background-position: right center;
+}
+
+.module-shell {
+  border: 1px solid #d8dbe2;
+  border-radius: 14px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.module-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  color: #fff;
+  background: linear-gradient(115deg, #0d1242, #1b1b1b 58%, #0d1242);
+}
+
+.module-title {
+  font-family: var(--font-halvar), var(--font-sofia-sans), sans-serif;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.module-body {
+  padding: 14px;
+}
+
+.form-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #4b5563;
+}
+
+.brand-input {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #111827;
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
+.brand-input option {
+  color: #111827;
+  background: #ffffff;
+}
+
+.brand-input:focus {
+  outline: 2px solid #e2c87b;
+  border-color: #b98e10;
+}
+
+.mini-btn {
+  border-radius: 10px;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1b1b1b;
+}
+
+.brand-table {
+  width: 100%;
+  border-collapse: collapse;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+}
+
+.brand-table th {
+  text-align: left;
+  background: #f4f6fb;
+  color: #0d1242;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 10px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.brand-table td {
+  font-size: 13px;
+  padding: 10px;
+  border-bottom: 1px solid #eef0f3;
+}
+
+.brand-table tr:last-child td {
+  border-bottom: 0;
+}

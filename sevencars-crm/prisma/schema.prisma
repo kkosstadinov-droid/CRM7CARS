@@ -1,0 +1,259 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum Role {
+  ADMIN
+  SALES_PERSON
+  ACCOUNT_MANAGER
+  LOGISTICS
+  SERVICE
+}
+
+enum LeadSource {
+  EMAIL
+  PHONE
+  WHATSAPP
+  VIBER
+  FACEBOOK
+  INSTAGRAM
+  OTHER
+}
+
+enum LeadStatus {
+  NEW
+  QUALIFIED
+  CONTRACT_SIGNED
+  LOST
+}
+
+enum DealStage {
+  LEAD
+  CONTRACT_SIGNED
+  VEHICLE_SEARCH
+  VEHICLE_PURCHASED
+  IN_LOGISTICS
+  SERVICE_REVIEW
+  SERVICE_OFFERED
+  INSURANCE_OFFERED
+  REGISTRATION_IN_PROGRESS
+  TIRES_BOOKED
+  DETAILING_BOOKED
+  DELIVERED
+  CLOSED_WON
+  CLOSED_LOST
+}
+
+enum InteractionChannel {
+  PHONE
+  EMAIL
+  WHATSAPP
+  VIBER
+  FACEBOOK
+  INSTAGRAM
+  OTHER
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+  BLOCKED
+}
+
+model User {
+  id        String   @id @default(cuid())
+  fullName  String
+  email     String   @unique
+  phone     String?
+  role      Role
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ownedLeads    Lead[] @relation("LeadOwner")
+  ownedDeals    Deal[] @relation("DealOwner")
+  createdTasks  Task[] @relation("TaskCreator")
+  assignedTasks Task[] @relation("TaskAssignee")
+}
+
+model Lead {
+  id                String     @id @default(cuid())
+  firstName         String
+  lastName          String
+  egn               String?
+  address           String?
+  phone             String
+  email             String?
+  source            LeadSource
+  status            LeadStatus @default(NEW)
+  requestedBrand    String
+  requestedModel    String
+  requestedYearFrom Int?
+  requestedYearTo   Int?
+  requestedMileage  Int?
+  requestedTrim     String?
+  requestedExtras   String?
+  notes             String?
+
+  ownerId String?
+  owner   User?   @relation("LeadOwner", fields: [ownerId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  interactions Interaction[]
+  deal         Deal?
+  reminders    Reminder[]
+}
+
+model Client {
+  id        String   @id @default(cuid())
+  firstName String
+  lastName  String
+  egn       String?
+  address   String?
+  phone     String
+  email     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deals Deal[]
+}
+
+model Deal {
+  id            String     @id @default(cuid())
+  code          String     @unique
+  status        DealStage  @default(LEAD)
+  overallStatus String
+  source        LeadSource
+  description   String?
+
+  leadId String @unique
+  lead   Lead   @relation(fields: [leadId], references: [id])
+
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id])
+
+  ownerId String?
+  owner   User?   @relation("DealOwner", fields: [ownerId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  stageHistory  DealStageHistory[]
+  interactions  Interaction[]
+  tasks         Task[]
+  vehicles      Vehicle[]
+  serviceOffers ServiceOffer[]
+  reminders     Reminder[]
+}
+
+model DealStageHistory {
+  id        String     @id @default(cuid())
+  dealId    String
+  fromStage DealStage?
+  toStage   DealStage
+  changedAt DateTime   @default(now())
+  changedBy String?
+  note      String?
+
+  deal Deal @relation(fields: [dealId], references: [id])
+}
+
+model Vehicle {
+  id              String   @id @default(cuid())
+  dealId          String
+  vin             String?  @unique
+  brand           String
+  model           String
+  year            Int?
+  trim            String?
+  mileage         Int?
+  purchasePrice   Float?
+  salePrice       Float?
+  location        String?
+  logisticsStatus String?
+  serviceStatus   String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  deal Deal @relation(fields: [dealId], references: [id])
+}
+
+model Task {
+  id          String     @id @default(cuid())
+  title       String
+  description String?
+  dueAt       DateTime?
+  status      TaskStatus @default(TODO)
+
+  dealId String?
+  deal   Deal?   @relation(fields: [dealId], references: [id])
+
+  createdById String?
+  createdBy   User?   @relation("TaskCreator", fields: [createdById], references: [id])
+
+  assigneeId String?
+  assignee   User?   @relation("TaskAssignee", fields: [assigneeId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Interaction {
+  id         String             @id @default(cuid())
+  dealId     String?
+  leadId     String?
+  channel    InteractionChannel
+  summary    String
+  happenedAt DateTime
+
+  deal Deal? @relation(fields: [dealId], references: [id])
+  lead Lead? @relation(fields: [leadId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+model ServiceOffer {
+  id          String   @id @default(cuid())
+  dealId      String
+  serviceType String
+  amount      Float?
+  status      String
+  note        String?
+  createdAt   DateTime @default(now())
+
+  deal Deal @relation(fields: [dealId], references: [id])
+}
+
+model Reminder {
+  id          String   @id @default(cuid())
+  leadId      String?
+  dealId      String?
+  title       String
+  remindAt    DateTime
+  isCompleted Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  lead Lead? @relation(fields: [leadId], references: [id])
+  deal Deal? @relation(fields: [dealId], references: [id])
+}
+
+model CrmLead {
+  id                 String   @id
+  createdAt          DateTime
+  updatedAt          DateTime @updatedAt
+  handoverDepartment String
+  stage              String
+  isFamily           Boolean  @default(false)
+  lastUpdatedBy      String   @default("")
+  payload            String
+
+  @@index([handoverDepartment, createdAt])
+  @@index([isFamily, createdAt])
+}

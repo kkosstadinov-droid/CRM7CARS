@@ -1,0 +1,10 @@
+.next
+node_modules
+dev.db
+*.log
+*.err.log
+dev.live.pid
+data/leads.json
+data/leads*.json
+data/*.tmp
+.env*

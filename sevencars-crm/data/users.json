@@ -1,0 +1,92 @@
+[
+  {
+    "username": "admin",
+    "password": "admin",
+    "role": "Admin",
+    "dashboardPreset": "pipeline",
+    "createdAt": "2026-03-04T14:43:14.481Z",
+    "updatedAt": "2026-03-04T14:43:14.481Z",
+    "mustChangePassword": false
+  },
+  {
+    "username": "boss",
+    "password": "boss",
+    "role": "Boss",
+    "dashboardPreset": "stats",
+    "createdAt": "2026-03-04T14:43:14.481Z",
+    "updatedAt": "2026-03-04T14:43:14.481Z",
+    "mustChangePassword": false
+  },
+  {
+    "username": "sales",
+    "password": "sales",
+    "role": "Sales",
+    "dashboardPreset": "pipeline",
+    "createdAt": "2026-03-04T14:43:14.481Z",
+    "updatedAt": "2026-03-04T14:43:14.481Z",
+    "mustChangePassword": false
+  },
+  {
+    "username": "accountmanager",
+    "password": "accountmanager",
+    "role": "AccountManager",
+    "dashboardPreset": "pipeline",
+    "createdAt": "2026-03-04T14:43:14.481Z",
+    "updatedAt": "2026-03-04T14:43:14.481Z",
+    "mustChangePassword": false
+  },
+  {
+    "username": "teamleadam",
+    "password": "teamleadam",
+    "role": "TeamLeadAM",
+    "dashboardPreset": "pipeline",
+    "createdAt": "2026-03-04T14:43:14.481Z",
+    "updatedAt": "2026-03-04T14:43:14.481Z",
+    "mustChangePassword": false
+  },
+  {
+    "username": "operationmanager",
+    "password": "operationmanager",
+    "role": "OperationManager",
+    "dashboardPreset": "stats",
+    "createdAt": "2026-03-04T14:43:14.481Z",
+    "updatedAt": "2026-03-04T14:43:14.481Z",
+    "mustChangePassword": false
+  },
+  {
+    "username": "logistics",
+    "password": "logistics",
+    "role": "Logistics",
+    "dashboardPreset": "pipeline",
+    "createdAt": "2026-03-04T14:43:14.481Z",
+    "updatedAt": "2026-03-04T14:43:14.481Z",
+    "mustChangePassword": false
+  },
+  {
+    "username": "service",
+    "password": "service",
+    "role": "Service",
+    "dashboardPreset": "pipeline",
+    "createdAt": "2026-03-04T14:43:14.481Z",
+    "updatedAt": "2026-03-04T14:43:14.481Z",
+    "mustChangePassword": false
+  },
+  {
+    "username": "insurance",
+    "password": "insurance",
+    "role": "Insurance",
+    "dashboardPreset": "pipeline",
+    "createdAt": "2026-03-04T14:43:14.481Z",
+    "updatedAt": "2026-03-04T14:43:14.481Z",
+    "mustChangePassword": false
+  },
+  {
+    "username": "showroom",
+    "password": "showroom",
+    "role": "Showroom",
+    "dashboardPreset": "pipeline",
+    "createdAt": "2026-03-04T14:43:14.481Z",
+    "updatedAt": "2026-03-04T14:43:14.481Z",
+    "mustChangePassword": false
+  }
+]
