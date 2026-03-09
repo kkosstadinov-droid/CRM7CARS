@@ -268,8 +268,32 @@ async function topUpPipelineStages() {
   }
 }
 
+async function ensureCrmLeadTable() {
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "CrmLead" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "createdAt" DATETIME NOT NULL,
+      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "handoverDepartment" TEXT NOT NULL,
+      "stage" TEXT NOT NULL,
+      "isFamily" BOOLEAN NOT NULL DEFAULT 0,
+      "lastUpdatedBy" TEXT NOT NULL DEFAULT '',
+      "payload" TEXT NOT NULL
+    )
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE INDEX IF NOT EXISTS "CrmLead_handoverDepartment_createdAt_idx"
+    ON "CrmLead"("handoverDepartment", "createdAt")
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE INDEX IF NOT EXISTS "CrmLead_isFamily_createdAt_idx"
+    ON "CrmLead"("isFamily", "createdAt")
+  `);
+}
+
 async function importFromJsonIfNeeded() {
   await mkdir(dataDir, { recursive: true });
+  await ensureCrmLeadTable();
   const count = await prisma.crmLead.count();
   if (count > 0) {
     await topUpPipelineStages();
