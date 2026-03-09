@@ -6,6 +6,7 @@ import type { ContractPackage, LeadDto, LeadSourceInput, MemoStatus, Registratio
 const dataDir = process.env.DATA_DIR?.trim() || (process.env.VERCEL ? path.join("/tmp", "sevencars-crm-data") : path.join(process.cwd(), "data"));
 const leadsPath = path.join(dataDir, "leads.json");
 const maxSeedImportBytes = 20 * 1024 * 1024;
+const pipelineStages: LeadDto["stage"][] = ["New leed", "Contacted", "No Answer", "Faild", "Potential", "Contract"];
 
 let bootstrapPromise: Promise<void> | null = null;
 
@@ -185,36 +186,95 @@ type LeadRow = {
 };
 
 function demoLeads(): LeadDto[] {
-  const base = new Date("2026-02-20T09:00:00.000Z").getTime();
-  const names = [
-    ["Ivan Petrov", "+359888123456", "ivan.petrov@email.com"],
-    ["Nikolay Georgiev", "+359887222333", "nikolay.georgiev@email.com"],
-    ["Elena Dimitrova", "+359886321000", "elena.dimitrova@email.com"],
-    ["Georgi Marinov", "+359888411122", "georgi@email.com"],
-    ["Mila Stoyanova", "+359889522633", "mila@email.com"],
-  ];
-  return names.map((n, i) =>
-    normalizeLead({
-      id: `demo_lead_${i + 1}`,
-      fullName: n[0],
-      phone: n[1],
-      email: n[2],
-      egn: `90010${i}1234`,
-      address: "Sofia",
-      vehicleRequest: "Demo Vehicle",
-      source: "call",
-      stage: "New leed",
-      createdAt: new Date(base + i * 86_400_000).toISOString(),
+  const base = new Date("2026-01-01T08:00:00.000Z").getTime();
+  const firstNames = ["Ivan", "Nikolay", "Elena", "Georgi", "Mila", "Petar", "Teodora", "Martin", "Raya", "Deyan"];
+  const lastNames = ["Petrov", "Georgiev", "Dimitrova", "Marinov", "Stoyanova", "Ivanov", "Koleva", "Todorov", "Nikolova", "Hristov"];
+  const brands = ["BMW", "Audi", "Mercedes", "VW", "Toyota", "Skoda"];
+  const models = ["X5", "A6", "GLC", "Tiguan", "RAV4", "Kodiaq"];
+  const leads: LeadDto[] = [];
+
+  for (let stageIndex = 0; stageIndex < pipelineStages.length; stageIndex += 1) {
+    const stage = pipelineStages[stageIndex];
+    for (let i = 0; i < 10; i += 1) {
+      const idx = stageIndex * 10 + i;
+      const firstName = firstNames[(stageIndex + i) % firstNames.length];
+      const lastName = lastNames[(stageIndex * 2 + i) % lastNames.length];
+      const brand = brands[idx % brands.length];
+      const model = models[(idx + 1) % models.length];
+      const year = 2018 + ((idx + 2) % 8);
+      const createdAt = new Date(base + idx * 10 * 60_000).toISOString();
+
+      leads.push(
+        normalizeLead({
+          id: `demo_lead_${stageIndex + 1}_${i + 1}`,
+          fullName: `${firstName} ${lastName}`,
+          phone: `+35988${String(1000000 + idx).slice(-7)}`,
+          email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}${idx}@example.com`,
+          egn: `90010${String(1000 + idx).slice(-4)}`,
+          address: "Sofia",
+          vehicleRequest: `${brand} ${model} ${year}`,
+          source: validSources[idx % validSources.length],
+          stage,
+          createdAt,
+          handoverDepartment: "sales",
+          handoverNote: `Demo lead for ${stage}`,
+        }),
+      );
+    }
+  }
+
+  return leads;
+}
+
+async function topUpPipelineStages() {
+  const stageRows = await prisma.crmLead.findMany({
+    where: {
+      isFamily: false,
       handoverDepartment: "sales",
-      handoverNote: "Demo",
-    }),
-  );
+      stage: { in: pipelineStages },
+    },
+    select: { stage: true },
+  });
+  const counts = Object.fromEntries(pipelineStages.map((stage) => [stage, 0])) as Record<LeadDto["stage"], number>;
+  for (const row of stageRows) {
+    const stage = normalizeStage(row.stage);
+    counts[stage] += 1;
+  }
+
+  const templates = demoLeads();
+  const additions: ReturnType<typeof toRow>[] = [];
+  const now = Date.now();
+
+  for (let stageIndex = 0; stageIndex < pipelineStages.length; stageIndex += 1) {
+    const stage = pipelineStages[stageIndex];
+    const missing = Math.max(0, 10 - counts[stage]);
+    if (missing === 0) continue;
+    const stageTemplates = templates.filter((lead) => lead.stage === stage);
+    for (let i = 0; i < missing; i += 1) {
+      const sourceLead = stageTemplates[i % stageTemplates.length];
+      const offset = additions.length + i;
+      const seeded = normalizeLead({
+        ...sourceLead,
+        id: `seed_${Date.now()}_${stageIndex}_${i}_${Math.random().toString(36).slice(2, 8)}`,
+        fullName: `${sourceLead.fullName} Seed ${counts[stage] + i + 1}`,
+        createdAt: new Date(now + offset * 60_000).toISOString(),
+      });
+      additions.push(toRow(seeded));
+    }
+  }
+
+  if (additions.length > 0) {
+    await prisma.crmLead.createMany({ data: additions });
+  }
 }
 
 async function importFromJsonIfNeeded() {
   await mkdir(dataDir, { recursive: true });
   const count = await prisma.crmLead.count();
-  if (count > 0) return;
+  if (count > 0) {
+    await topUpPipelineStages();
+    return;
+  }
 
   let imported = false;
   try {
@@ -246,6 +306,7 @@ async function importFromJsonIfNeeded() {
     const rows = demoLeads().map(toRow);
     await prisma.crmLead.createMany({ data: rows });
   }
+  await topUpPipelineStages();
 }
 
 async function ensureReady() {
