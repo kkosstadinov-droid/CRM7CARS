@@ -1,8 +1,11 @@
-export type LeadStage = "New leed" | "Contacted" | "No Answer" | "Faild" | "Potential" | "Contract";
+export type LeadStage = "New Lead" | "Potential" | "W/o Potential" | "Need Time" | "No Answer" | "Message" | "Contract";
 export type YesNo = "Yes" | "No";
 export type RegistrationStatus = "Yes" | "Yes transit" | "No";
 export type ContractPackage = "" | "Auction" | "Plus" | "Diamond";
+export type ShowroomPackage = "" | "Basic" | "Standart" | "VIP";
 export type MemoStatus = "none" | "pending_teamlead" | "rejected_by_teamlead" | "pending_operation" | "rejected_by_operation" | "approved";
+export type MemoSubject = "" | "Buy car" | "Complain";
+export type ShowroomOwnership = "Own" | "Client";
 
 export type LeadSourceInput = "call" | "mail" | "whatsapp" | "viber" | "facebook" | "instagram" | "other";
 export type MemoActorRole = "AccountManager" | "TeamLeadAM" | "OperationManager";
@@ -15,6 +18,28 @@ export type MemoEvent = {
   fromStatus: MemoStatus;
   toStatus: MemoStatus;
   comment: string;
+};
+export type LeadHistoryAction = "created" | "updated" | "transferred" | "returned" | "memo";
+export type LeadHistoryEvent = {
+  id: string;
+  at: string;
+  actor: string;
+  action: LeadHistoryAction;
+  message: string;
+};
+export type LeadNoteEntry = {
+  id: string;
+  at: string;
+  actor: string;
+  note: string;
+};
+export type LeadDocument = {
+  id: string;
+  name: string;
+  url: string;
+  pathname: string;
+  uploadedAt: string;
+  size: number;
 };
 
 export type LeadDto = {
@@ -55,9 +80,18 @@ export type LeadDto = {
   servicedDate: string;
   secondKey: YesNo;
   secondTireSet: YesNo;
+  payoffDate: string;
+  aftersalesWarranty: YesNo;
+  aftersalesWarrantyDate: string;
+  aftersalesWarrantyMileage: string;
   purchaseLocation: string;
   vatKey: string;
   deliveryPrice: string;
+  showroomOwnership: ShowroomOwnership;
+  showroomPackage: ShowroomPackage;
+  showroomContract: LeadDocument[];
+  showroomReserved: YesNo;
+  showroomSold: YesNo;
   warranty: YesNo;
   insuranceInfo: string;
   insuranceGoPrice: string;
@@ -88,6 +122,7 @@ export type LeadDto = {
   firstRegistrationDate: string;
   mileage: string;
   memoStatus: MemoStatus;
+  memoSubject: MemoSubject;
   memoContractLink: string;
   memoDescription: string;
   memoAccountSubmittedAt: string;
@@ -96,6 +131,16 @@ export type LeadDto = {
   memoOperationComment: string;
   memoOperationDecisionAt: string;
   memoEvents: MemoEvent[];
+  callbackAt: string;
+  callbackNotes: string;
+  callbackActivityId: string;
+  familyFollowUpActivityId: string;
+  pickupDate: string;
+  pickupActivityId: string;
+  accountDocuments: LeadDocument[];
+  returnToSalesComment: string;
+  noteEntries: LeadNoteEntry[];
+  history: LeadHistoryEvent[];
   transferredToAccountAt: string;
   transferredToLogisticsAt: string;
   operationApprovedAt: string;
@@ -138,17 +183,18 @@ export function sourceEnumToInput(value: LeadSource): LeadSourceInput {
 }
 
 export function stageToStatus(stage: LeadStage): LeadStatus {
-  if (stage === "Contacted") return "QUALIFIED";
   if (stage === "Potential") return "QUALIFIED";
-  if (stage === "Contract") return "CONTRACT_SIGNED";
+  if (stage === "Message" || stage === "Contract") return "CONTRACT_SIGNED";
   return "NEW";
 }
 
 export function statusToStage(status: LeadStatus): LeadStage {
-  if (status === "QUALIFIED") return "Contacted";
+  if (status === "QUALIFIED") return "Potential";
   if (status === "CONTRACT_SIGNED") return "Contract";
-  return "New leed";
+  return "New Lead";
 }
+
+export const callbackStages: LeadStage[] = ["Potential", "Need Time", "No Answer"];
 
 export function splitFullName(fullName: string) {
   const cleaned = String(fullName ?? "").trim().replace(/\s+/g, " ");

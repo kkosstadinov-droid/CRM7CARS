@@ -257,3 +257,16 @@ model CrmLead {
   @@index([handoverDepartment, createdAt])
   @@index([isFamily, createdAt])
 }
+
+model CrmActivity {
+  id         String   @id
+  createdAt  DateTime
+  updatedAt  DateTime @updatedAt
+  department String
+  startsAt   DateTime
+  status     String
+  payload    String
+
+  @@index([startsAt, createdAt])
+  @@index([department, startsAt])
+}

@@ -1,136 +1,237 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { del, get, list, put } from "@vercel/blob";
+import { hasBlobStore } from "@/lib/blob-json-store";
+import { prisma } from "@/lib/prisma";
 import type { ActivityDto } from "@/lib/activities";
 
-const dataDir = process.env.DATA_DIR?.trim() || (process.env.VERCEL ? path.join("/tmp", "sevencars-crm-data") : path.join(process.cwd(), "data"));
-const activitiesPath = path.join(dataDir, "activities.json");
+type ActivityRow = {
+  id: string;
+  createdAt: Date;
+  department: string;
+  startsAt: Date;
+  status: string;
+  payload: string;
+};
 
-function demoActivities(): ActivityDto[] {
-  const now = new Date("2026-03-01T08:00:00.000Z").getTime();
-  const rows: Array<Omit<ActivityDto, "id" | "createdAt">> = [
-    {
-      title: "Account review Konstantin Kostadinov",
-      note: "Review Opel Manta sourcing scope and budget.",
-      startsAt: new Date(now + 1 * 24 * 60 * 60 * 1000 + 9 * 60 * 60 * 1000).toISOString(),
-      status: "planned",
-      department: "account",
-    },
-    {
-      title: "Account call Elena Dimitrova",
-      note: "Prepare Mercedes GLC buying shortlist.",
-      startsAt: new Date(now + 2 * 24 * 60 * 60 * 1000 + 13 * 60 * 60 * 1000).toISOString(),
-      status: "planned",
-      department: "account",
-    },
-    {
-      title: "Account follow-up Rosen Tanev",
-      note: "Discuss Audi Q7 contract handover details.",
-      startsAt: new Date(now + 3 * 24 * 60 * 60 * 1000 + 10 * 60 * 60 * 1000).toISOString(),
-      status: "planned",
-      department: "account",
-    },
-    {
-      title: "Sales callback Georgi Marinov",
-      note: "Pre-qualification update before contract stage.",
-      startsAt: new Date(now + 4 * 24 * 60 * 60 * 1000 + 15 * 60 * 60 * 1000).toISOString(),
-      status: "planned",
-      department: "sales",
-    },
-    {
-      title: "Logistics prep Desislava Ilieva",
-      note: "Prepare transport and registration checklist.",
-      startsAt: new Date(now + 5 * 24 * 60 * 60 * 1000 + 11 * 60 * 60 * 1000).toISOString(),
-      status: "planned",
-      department: "logistics",
-    },
-  ];
+type ListActivityOptions = {
+  ownerUsername?: string;
+};
 
-  return rows.map((row, i) => ({
-    ...row,
-    id: `demo_activity_${i + 1}`,
-    createdAt: new Date(now - (i + 1) * 60 * 60 * 1000).toISOString(),
-  }));
+const activitiesBlobPrefix = process.env.ACTIVITIES_BLOB_PREFIX?.trim() || "crm/activities/";
+
+function normalizeActivity(input: Partial<ActivityDto> & Pick<ActivityDto, "id">): ActivityDto {
+  return {
+    id: input.id,
+    title: typeof input.title === "string" && input.title.trim() ? input.title.trim() : "Activity",
+    note: typeof input.note === "string" ? input.note.trim() : "",
+    startsAt: typeof input.startsAt === "string" && !Number.isNaN(Date.parse(input.startsAt)) ? new Date(input.startsAt).toISOString() : new Date().toISOString(),
+    department:
+      input.department === "account" || input.department === "logistics" || input.department === "sales"
+        ? input.department
+        : "sales",
+    status: input.status === "done" ? "done" : "planned",
+    ownerUsername: typeof input.ownerUsername === "string" ? input.ownerUsername.trim().toLowerCase() : "",
+    createdAt: typeof input.createdAt === "string" && !Number.isNaN(Date.parse(input.createdAt)) ? new Date(input.createdAt).toISOString() : new Date().toISOString(),
+  };
 }
 
-async function ensureStore() {
-  await mkdir(dataDir, { recursive: true });
+function toRow(activity: ActivityDto) {
+  return {
+    id: activity.id,
+    createdAt: new Date(activity.createdAt),
+    department: activity.department,
+    startsAt: new Date(activity.startsAt),
+    status: activity.status,
+    payload: JSON.stringify(activity),
+  };
+}
+
+function fromRow(row: ActivityRow): ActivityDto {
+  let parsed: Partial<ActivityDto> = {};
   try {
-    const existing = await readFile(activitiesPath, "utf8");
-    const parsed = JSON.parse(existing) as ActivityDto[];
-    const hasAccount = Array.isArray(parsed) && parsed.some((item) => item.department === "account" || item.title.toLowerCase().includes("account"));
-    if (!Array.isArray(parsed) || parsed.length < 5 || !hasAccount) {
-      await writeFile(activitiesPath, JSON.stringify(demoActivities(), null, 2), "utf8");
-    }
+    parsed = JSON.parse(row.payload) as Partial<ActivityDto>;
   } catch {
-    await writeFile(activitiesPath, JSON.stringify(demoActivities(), null, 2), "utf8");
+    parsed = {};
+  }
+
+  return normalizeActivity({
+    ...parsed,
+    id: row.id,
+    department: row.department as ActivityDto["department"],
+    startsAt: row.startsAt.toISOString(),
+    status: row.status as ActivityDto["status"],
+    createdAt: row.createdAt.toISOString(),
+  });
+}
+
+async function streamToText(stream: ReadableStream<Uint8Array>) {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
+  }
+
+  text += decoder.decode();
+  return text;
+}
+
+function activityBlobPath(id: string) {
+  return `${activitiesBlobPrefix}${id}.json`;
+}
+
+async function readBlobActivity(id: string) {
+  const result = await get(activityBlobPath(id), { access: "private", useCache: false });
+  if (!result || result.statusCode !== 200 || !result.stream) return null;
+  try {
+    return normalizeActivity(JSON.parse(await streamToText(result.stream)) as ActivityDto);
+  } catch {
+    return null;
   }
 }
 
-async function readActivities() {
-  await ensureStore();
-  const raw = await readFile(activitiesPath, "utf8");
-  const parsed = JSON.parse(raw) as ActivityDto[];
-  if (!Array.isArray(parsed)) return [];
-  return parsed.map((item) => ({
-    ...item,
-    department:
-      item.department === "sales" || item.department === "account" || item.department === "logistics"
-        ? item.department
-        : item.title.toLowerCase().includes("account")
-          ? "account"
-          : item.title.toLowerCase().includes("logistics")
-            ? "logistics"
-            : "sales",
-    note: item.note ?? "",
-    title: item.title ?? "Activity",
-    startsAt: item.startsAt ?? new Date().toISOString(),
-    status: (item.status === "done" ? "done" : "planned") as ActivityDto["status"],
-    createdAt: item.createdAt ?? new Date().toISOString(),
-  }));
+let bootstrapPromise: Promise<void> | null = null;
+
+async function ensureCrmActivityTable() {
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "CrmActivity" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "createdAt" DATETIME NOT NULL,
+      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "department" TEXT NOT NULL,
+      "startsAt" DATETIME NOT NULL,
+      "status" TEXT NOT NULL,
+      "payload" TEXT NOT NULL
+    )
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE INDEX IF NOT EXISTS "CrmActivity_startsAt_createdAt_idx"
+    ON "CrmActivity"("startsAt", "createdAt")
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE INDEX IF NOT EXISTS "CrmActivity_department_startsAt_idx"
+    ON "CrmActivity"("department", "startsAt")
+  `);
 }
 
-async function writeActivities(items: ActivityDto[]) {
-  await ensureStore();
-  await writeFile(activitiesPath, JSON.stringify(items, null, 2), "utf8");
+async function ensureReady() {
+  if (!bootstrapPromise) {
+    bootstrapPromise = ensureCrmActivityTable();
+  }
+  await bootstrapPromise;
 }
 
-export async function listActivities() {
-  const items = await readActivities();
-  return items.sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+export async function listActivities(options: ListActivityOptions = {}) {
+  if (hasBlobStore()) {
+    const page = await list({ prefix: activitiesBlobPrefix, limit: 1000 });
+    const blobs = await Promise.all(
+      page.blobs.map(async (blob) => {
+        const result = await get(blob.pathname, { access: "private", useCache: false });
+        if (!result || result.statusCode !== 200 || !result.stream) return null;
+        try {
+          return normalizeActivity(JSON.parse(await streamToText(result.stream)) as ActivityDto);
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const items = blobs.filter((item): item is ActivityDto => Boolean(item));
+    const filtered = options.ownerUsername ? items.filter((item) => item.ownerUsername === options.ownerUsername) : items;
+    return filtered.sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.createdAt.localeCompare(b.createdAt));
+  }
+
+  await ensureReady();
+  const rows = await prisma.crmActivity.findMany({
+    orderBy: [{ startsAt: "asc" }, { createdAt: "asc" }],
+  });
+  const items = rows.map((row: ActivityRow) => fromRow(row));
+  return options.ownerUsername ? items.filter((item) => item.ownerUsername === options.ownerUsername) : items;
 }
 
 export async function createActivity(input: Omit<ActivityDto, "id" | "createdAt">) {
-  const items = await readActivities();
-  const created: ActivityDto = {
+  const created = normalizeActivity({
     ...input,
     id: `act_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     createdAt: new Date().toISOString(),
-  };
-  items.push(created);
-  items.sort((a, b) => a.startsAt.localeCompare(b.startsAt));
-  await writeActivities(items);
+  });
+
+  if (hasBlobStore()) {
+    await put(activityBlobPath(created.id), JSON.stringify(created, null, 2), {
+      access: "private",
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      contentType: "application/json; charset=utf-8",
+    });
+    return created;
+  }
+
+  await ensureReady();
+  await prisma.crmActivity.create({ data: toRow(created) });
   return created;
 }
 
 export async function updateActivity(id: string, patch: Partial<Omit<ActivityDto, "id" | "createdAt">>) {
-  const items = await readActivities();
-  const idx = items.findIndex((item) => item.id === id);
-  if (idx === -1) return null;
+  if (hasBlobStore()) {
+    const current = await readBlobActivity(id);
+    if (!current) return null;
 
-  const updated: ActivityDto = {
-    ...items[idx],
+    const updated = normalizeActivity({
+      ...current,
+      ...patch,
+      id,
+      createdAt: current.createdAt,
+    });
+
+    await put(activityBlobPath(id), JSON.stringify(updated, null, 2), {
+      access: "private",
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      contentType: "application/json; charset=utf-8",
+    });
+
+    return updated;
+  }
+
+  await ensureReady();
+  const row = await prisma.crmActivity.findUnique({ where: { id } });
+  if (!row) return null;
+
+  const current = fromRow(row);
+  const updated = normalizeActivity({
+    ...current,
     ...patch,
-  };
-  items[idx] = updated;
-  items.sort((a, b) => a.startsAt.localeCompare(b.startsAt));
-  await writeActivities(items);
+    id,
+    createdAt: current.createdAt,
+  });
+
+  await prisma.crmActivity.update({
+    where: { id },
+    data: {
+      department: updated.department,
+      startsAt: new Date(updated.startsAt),
+      status: updated.status,
+      payload: JSON.stringify(updated),
+    },
+  });
+
   return updated;
 }
 
 export async function deleteActivity(id: string) {
-  const items = await readActivities();
-  const next = items.filter((item) => item.id !== id);
-  if (next.length === items.length) return false;
-  await writeActivities(next);
-  return true;
+  if (hasBlobStore()) {
+    const existing = await readBlobActivity(id);
+    if (!existing) return false;
+    await del(activityBlobPath(id));
+    return true;
+  }
+
+  await ensureReady();
+  try {
+    await prisma.crmActivity.delete({ where: { id } });
+    return true;
+  } catch {
+    return false;
+  }
 }

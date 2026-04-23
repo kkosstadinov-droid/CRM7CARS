@@ -114,7 +114,7 @@ export function BossDashboard() {
 
     const salesPipeline = effectiveLeads.filter((lead) => lead.handoverDepartment === "sales");
     const accountPipeline = effectiveLeads.filter((lead) => lead.handoverDepartment === "account");
-    const salesContractLeads = salesPipeline.filter((lead) => lead.stage === "Contract");
+    const salesContractLeads = salesPipeline.filter((lead) => lead.stage === "Message" || lead.stage === "Contract");
     const contractAuction = salesContractLeads.filter((lead) => lead.contractPackage === "Auction").length;
     const contractPlus = salesContractLeads.filter((lead) => lead.contractPackage === "Plus").length;
     const contractDiamond = salesContractLeads.filter((lead) => lead.contractPackage === "Diamond").length;
@@ -122,18 +122,19 @@ export function BossDashboard() {
     const salesEnteredInPeriod = effectiveLeads.filter((lead) => inRange(lead.createdAt, from, to));
     const salesMigratedInPeriod = effectiveLeads.filter((lead) => {
       if (inRange(lead.transferredToAccountAt, from, to)) return true;
-      return !lead.transferredToAccountAt && lead.handoverDepartment !== "sales" && lead.stage === "Contract" && inRange(lead.createdAt, from, to);
+      return !lead.transferredToAccountAt && lead.handoverDepartment !== "sales" && (lead.stage === "Message" || lead.stage === "Contract") && inRange(lead.createdAt, from, to);
     });
     const accountReceivedInPeriod = salesMigratedInPeriod.length;
     const operationApprovedInPeriod = effectiveLeads.filter((lead) => inRange(lead.operationApprovedAt, from, to)).length;
 
     const salesRows = [
       { label: "Active Leads In Sales Pipeline", value: salesPipeline.length },
-      { label: "Status: New leed", value: salesPipeline.filter((lead) => lead.stage === "New leed").length },
-      { label: "Status: Contacted", value: salesPipeline.filter((lead) => lead.stage === "Contacted").length },
+      { label: "Status: New Lead", value: salesPipeline.filter((lead) => lead.stage === "New Lead").length },
+      { label: "Status: Need Time", value: salesPipeline.filter((lead) => lead.stage === "Need Time").length },
       { label: "Status: No Answer", value: salesPipeline.filter((lead) => lead.stage === "No Answer").length },
-      { label: "Status: Faild", value: salesPipeline.filter((lead) => lead.stage === "Faild").length },
+      { label: "Status: W/o Potential", value: salesPipeline.filter((lead) => lead.stage === "W/o Potential").length },
       { label: "Status: Potential", value: salesPipeline.filter((lead) => lead.stage === "Potential").length },
+      { label: "Status: Message", value: salesPipeline.filter((lead) => lead.stage === "Message").length },
       { label: "Status: Contract", value: salesPipeline.filter((lead) => lead.stage === "Contract").length },
       { label: "Contract Package: Auction", value: contractAuction },
       { label: "Contract Package: Plus", value: contractPlus },
@@ -145,10 +146,11 @@ export function BossDashboard() {
 
     const accountRows = [
       { label: "Active Leads In Account Pipeline", value: accountPipeline.length },
-      { label: "Status: Contacted", value: accountPipeline.filter((lead) => lead.stage === "Contacted").length },
+      { label: "Status: Need Time", value: accountPipeline.filter((lead) => lead.stage === "Need Time").length },
       { label: "Status: No Answer", value: accountPipeline.filter((lead) => lead.stage === "No Answer").length },
-      { label: "Status: Faild", value: accountPipeline.filter((lead) => lead.stage === "Faild").length },
+      { label: "Status: W/o Potential", value: accountPipeline.filter((lead) => lead.stage === "W/o Potential").length },
       { label: "Status: Potential", value: accountPipeline.filter((lead) => lead.stage === "Potential").length },
+      { label: "Status: Message", value: accountPipeline.filter((lead) => lead.stage === "Message").length },
       { label: "Status: Contract", value: accountPipeline.filter((lead) => lead.stage === "Contract").length },
       { label: "Approvals From OperationManager", value: operationApprovedInPeriod },
       { label: "Account Success Rate %", value: accountReceivedInPeriod ? Math.round((operationApprovedInPeriod / accountReceivedInPeriod) * 100) : 0 },
@@ -170,7 +172,7 @@ export function BossDashboard() {
 
     const salesMigratedPrev = effectiveLeads.filter((lead) => {
       if (inRange(lead.transferredToAccountAt, prevFrom, prevTo)) return true;
-      return !lead.transferredToAccountAt && lead.handoverDepartment !== "sales" && lead.stage === "Contract" && inRange(lead.createdAt, prevFrom, prevTo);
+      return !lead.transferredToAccountAt && lead.handoverDepartment !== "sales" && (lead.stage === "Message" || lead.stage === "Contract") && inRange(lead.createdAt, prevFrom, prevTo);
     });
     const salesEnteredPrev = effectiveLeads.filter((lead) => inRange(lead.createdAt, prevFrom, prevTo));
     const accountReceivedPrev = salesMigratedPrev.length;
@@ -178,11 +180,12 @@ export function BossDashboard() {
 
     const prevSalesRows = [
       { label: "Active Leads In Sales Pipeline", value: salesPipeline.length },
-      { label: "Status: New leed", value: salesPipeline.filter((lead) => lead.stage === "New leed").length },
-      { label: "Status: Contacted", value: salesPipeline.filter((lead) => lead.stage === "Contacted").length },
+      { label: "Status: New Lead", value: salesPipeline.filter((lead) => lead.stage === "New Lead").length },
+      { label: "Status: Need Time", value: salesPipeline.filter((lead) => lead.stage === "Need Time").length },
       { label: "Status: No Answer", value: salesPipeline.filter((lead) => lead.stage === "No Answer").length },
-      { label: "Status: Faild", value: salesPipeline.filter((lead) => lead.stage === "Faild").length },
+      { label: "Status: W/o Potential", value: salesPipeline.filter((lead) => lead.stage === "W/o Potential").length },
       { label: "Status: Potential", value: salesPipeline.filter((lead) => lead.stage === "Potential").length },
+      { label: "Status: Message", value: salesPipeline.filter((lead) => lead.stage === "Message").length },
       { label: "Status: Contract", value: salesPipeline.filter((lead) => lead.stage === "Contract").length },
       { label: "Contract Package: Auction", value: contractAuction },
       { label: "Contract Package: Plus", value: contractPlus },
@@ -193,10 +196,11 @@ export function BossDashboard() {
     ];
     const prevAccountRows = [
       { label: "Active Leads In Account Pipeline", value: accountPipeline.length },
-      { label: "Status: Contacted", value: accountPipeline.filter((lead) => lead.stage === "Contacted").length },
+      { label: "Status: Need Time", value: accountPipeline.filter((lead) => lead.stage === "Need Time").length },
       { label: "Status: No Answer", value: accountPipeline.filter((lead) => lead.stage === "No Answer").length },
-      { label: "Status: Faild", value: accountPipeline.filter((lead) => lead.stage === "Faild").length },
+      { label: "Status: W/o Potential", value: accountPipeline.filter((lead) => lead.stage === "W/o Potential").length },
       { label: "Status: Potential", value: accountPipeline.filter((lead) => lead.stage === "Potential").length },
+      { label: "Status: Message", value: accountPipeline.filter((lead) => lead.stage === "Message").length },
       { label: "Status: Contract", value: accountPipeline.filter((lead) => lead.stage === "Contract").length },
       { label: "Approvals From OperationManager", value: operationApprovedPrev },
       { label: "Account Success Rate %", value: accountReceivedPrev ? Math.round((operationApprovedPrev / accountReceivedPrev) * 100) : 0 },

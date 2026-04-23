@@ -5,5 +5,6 @@ export type ActivityDto = {
   startsAt: string;
   status: "planned" | "done";
   department: "sales" | "account" | "logistics";
+  ownerUsername: string;
   createdAt: string;
 };

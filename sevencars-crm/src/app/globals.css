@@ -11,20 +11,21 @@
   --gold-deep: #5a4202;
   --navy: #0d1242;
   --accent: #ff451c;
+  --font-sans-ui: "Segoe UI", "Trebuchet MS", system-ui, sans-serif;
 }
 
 body {
   margin: 0;
   background: radial-gradient(circle at 5% -20%, #fff0bc 0%, #f8f8fa 35%, #eef1f8 100%);
   color: var(--text);
-  font-family: var(--font-sofia-sans), system-ui, sans-serif;
+  font-family: var(--font-sans-ui);
 }
 
 h1,
 h2,
 h3,
 .brand-title {
-  font-family: var(--font-halvar), var(--font-sofia-sans), sans-serif;
+  font-family: var(--font-halvar), var(--font-sans-ui);
   letter-spacing: 0.01em;
 }
 
@@ -101,7 +102,7 @@ h3,
 }
 
 .module-title {
-  font-family: var(--font-halvar), var(--font-sofia-sans), sans-serif;
+  font-family: var(--font-halvar), var(--font-sans-ui);
   font-size: 17px;
   font-weight: 700;
 }

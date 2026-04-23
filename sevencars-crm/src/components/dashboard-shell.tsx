@@ -11,6 +11,7 @@ import { LogoutButton } from "@/components/logout-button";
 import { SalesDashboard } from "@/components/sales-dashboard";
 
 const profileOptions: AppRole[] = ["Boss", "Sales", "Showroom", "AccountManager", "TeamLeadAM", "OperationManager", "Logistics", "Service", "Insurance"];
+const showroomAccessRoles: AppRole[] = ["Sales", "AccountManager", "TeamLeadAM", "Logistics", "Service", "Insurance"];
 
 export function DashboardShell({
   activeRole,
@@ -21,25 +22,48 @@ export function DashboardShell({
   activeUsername: string;
   activeDashboardPreset: DashboardPreset;
 }) {
-  const canProfileSwitch = activeRole === "OperationManager" || activeRole === "Boss";
+  const canShowroomSwitch = showroomAccessRoles.includes(activeRole);
+  const canProfileSwitch = activeRole === "OperationManager" || activeRole === "Boss" || canShowroomSwitch;
   const defaultRole = activeRole === "Boss" ? "Boss" : activeRole;
-  const [profileRole, setProfileRole] = useState<AppRole>(defaultRole);
+  const [profileRole, setProfileRole] = useState<AppRole>(() => {
+    if (typeof window === "undefined") return defaultRole;
+    const forcedProfile = new URLSearchParams(window.location.search).get("profile");
+    if (forcedProfile && profileOptions.includes(forcedProfile as AppRole)) {
+      return forcedProfile as AppRole;
+    }
+    return defaultRole;
+  });
   const opStatsPopupMode = useMemo(() => {
     if (activeRole !== "OperationManager") return false;
     if (typeof window === "undefined") return false;
     const params = new URLSearchParams(window.location.search);
     return params.get("opstats") === "1";
   }, [activeRole]);
+  const standaloneShowroomAddLead = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    const params = new URLSearchParams(window.location.search);
+    return params.get("addLead") === "1" || params.get("showroomAddLead") === "1";
+  }, []);
   const effectiveRole = canProfileSwitch ? profileRole : activeRole;
-  const readOnlyView = canProfileSwitch && effectiveRole !== activeRole;
+  const readOnlyView = (activeRole === "OperationManager" || activeRole === "Boss") && effectiveRole !== activeRole;
 
   const visibleOptions = useMemo(() => {
     if (activeRole === "Boss") return profileOptions;
-    return profileOptions.filter((role) => role !== "Boss");
-  }, [activeRole]);
+    if (activeRole === "OperationManager") return profileOptions.filter((role) => role !== "Boss");
+    if (canShowroomSwitch) return [activeRole, "Showroom"];
+    return [activeRole];
+  }, [activeRole, canShowroomSwitch]);
 
   const useStatsByPreset = activeDashboardPreset === "stats";
   const renderStats = effectiveRole === "Boss" || (!canProfileSwitch && useStatsByPreset) || (activeRole === "OperationManager" && opStatsPopupMode);
+
+  if (standaloneShowroomAddLead && (effectiveRole === "Showroom" || effectiveRole === "Sales")) {
+    return (
+      <main className="mx-auto min-h-screen max-w-5xl px-4 py-8 md:px-8">
+        <SalesDashboard role={effectiveRole} readOnlyView={readOnlyView} username={activeUsername} />
+      </main>
+    );
+  }
 
   return (
     <main className="mx-auto min-h-screen max-w-7xl px-4 py-8 md:px-8">

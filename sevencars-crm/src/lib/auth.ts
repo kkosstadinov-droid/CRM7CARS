@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { hasBlobStore, readJsonBlob, updateJsonBlob } from "@/lib/blob-json-store";
 
 export type AppRole = "Admin" | "Boss" | "Sales" | "AccountManager" | "TeamLeadAM" | "OperationManager" | "Logistics" | "Service" | "Insurance" | "Showroom";
 export type DashboardPreset = "pipeline" | "stats";
@@ -19,8 +20,9 @@ export type SessionInfo = {
   role: AppRole;
 };
 
-const dataDir = path.join(process.cwd(), "data");
+const dataDir = process.env.VERCEL ? path.join("/tmp", "sevencars-crm-data") : path.join(process.cwd(), "data");
 const usersPath = path.join(dataDir, "users.json");
+const usersBlobPath = process.env.USERS_BLOB_PATH?.trim() || "crm/users.json";
 
 export const defaultRoleCredentials: Record<string, AppRole> = {
   admin: "Admin",
@@ -62,6 +64,15 @@ function defaultUsers(): AppUser[] {
 }
 
 async function ensureUsersStore() {
+  if (hasBlobStore()) {
+    const current = await readJsonBlob<AppUser[]>(usersBlobPath, defaultUsers);
+    const parsed = Array.isArray(current.value) ? current.value : [];
+    if (!current.exists || parsed.length === 0) {
+      await updateJsonBlob<AppUser[]>(usersBlobPath, defaultUsers, () => defaultUsers());
+    }
+    return;
+  }
+
   await mkdir(dataDir, { recursive: true });
   try {
     const raw = await readFile(usersPath, "utf8");
@@ -76,8 +87,9 @@ async function ensureUsersStore() {
 
 async function readUsers() {
   await ensureUsersStore();
-  const raw = await readFile(usersPath, "utf8");
-  const parsed = JSON.parse(raw) as AppUser[];
+  const parsed = hasBlobStore()
+    ? (await readJsonBlob<AppUser[]>(usersBlobPath, defaultUsers)).value
+    : (JSON.parse(await readFile(usersPath, "utf8")) as AppUser[]);
   if (!Array.isArray(parsed)) return [];
   return parsed
     .filter((user) => typeof user === "object" && user !== null)
@@ -99,6 +111,11 @@ async function readUsers() {
 }
 
 async function writeUsers(users: AppUser[]) {
+  if (hasBlobStore()) {
+    await updateJsonBlob<AppUser[]>(usersBlobPath, defaultUsers, () => users);
+    return;
+  }
+
   await ensureUsersStore();
   const tmpPath = `${usersPath}.tmp`;
   await writeFile(tmpPath, JSON.stringify(users, null, 2), "utf8");

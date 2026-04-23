@@ -1,13 +1,6 @@
 ﻿import type { Metadata } from "next";
 import localFont from "next/font/local";
-import { Sofia_Sans } from "next/font/google";
 import "./globals.css";
-
-const sofiaSans = Sofia_Sans({
-  variable: "--font-sofia-sans",
-  subsets: ["latin", "cyrillic"],
-  weight: ["400", "600", "700"],
-});
 
 const halvar = localFont({
   src: "../../public/fonts/HalvarBreit-Bd.woff2",
@@ -27,7 +20,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${sofiaSans.variable} ${halvar.variable} antialiased`}>{children}</body>
+      <body className={`${halvar.variable} antialiased`}>{children}</body>
     </html>
   );
 }

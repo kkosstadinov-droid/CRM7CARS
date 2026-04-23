@@ -1,26 +1,45 @@
-﻿import { mkdir, readFile, stat } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import { del, get, list, put } from "@vercel/blob";
+import { hasBlobStore } from "@/lib/blob-json-store";
 import { prisma } from "@/lib/prisma";
-import type { ContractPackage, LeadDto, LeadSourceInput, MemoStatus, RegistrationStatus, YesNo } from "@/lib/leads";
+import type { ContractPackage, LeadDocument, LeadDto, LeadHistoryEvent, LeadNoteEntry, LeadSourceInput, MemoStatus, MemoSubject, RegistrationStatus, ShowroomOwnership, ShowroomPackage, YesNo } from "@/lib/leads";
 
 const dataDir = process.env.DATA_DIR?.trim() || (process.env.VERCEL ? path.join("/tmp", "sevencars-crm-data") : path.join(process.cwd(), "data"));
-const leadsPath = path.join(dataDir, "leads.json");
-const maxSeedImportBytes = 20 * 1024 * 1024;
-const pipelineStages: LeadDto["stage"][] = ["New leed", "Contacted", "No Answer", "Faild", "Potential", "Contract"];
-
+const leadsBlobPrefix = process.env.LEADS_BLOB_PREFIX?.trim() || "crm/leads/";
 let bootstrapPromise: Promise<void> | null = null;
 
 const validSources: LeadSourceInput[] = ["call", "mail", "whatsapp", "viber", "facebook", "instagram", "other"];
 
+async function streamToText(stream: ReadableStream<Uint8Array>) {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
+  }
+
+  text += decoder.decode();
+  return text;
+}
+
+function leadBlobPath(id: string) {
+  return `${leadsBlobPrefix}${id}.json`;
+}
+
 function normalizeStage(stage: string | undefined): LeadDto["stage"] {
   const s = String(stage ?? "").trim().toLowerCase();
-  if (s === "new leed" || s === "new lead") return "New leed";
-  if (s === "contacted") return "Contacted";
+  if (s === "new lead" || s === "new leed") return "New Lead";
+  if (s === "potential" || s === "potentiall" || s === "searching") return "Potential";
+  if (s === "w/o potential" || s === "without potential" || s === "failed" || s === "faild") return "W/o Potential";
+  if (s === "need time" || s === "needtime" || s === "contacted") return "Need Time";
   if (s === "no answer" || s === "noanswer") return "No Answer";
-  if (s === "faild" || s === "failed") return "Faild";
-  if (s === "potential" || s === "searching") return "Potential";
+  if (s === "message") return "Message";
   if (s === "contract" || s === "sent to accountmanager") return "Contract";
-  return "New leed";
+  return "New Lead";
 }
 
 function normalizeDepartment(value: string | undefined): LeadDto["handoverDepartment"] {
@@ -35,6 +54,11 @@ function normalizeMemoStatus(value: string | undefined): MemoStatus {
   return "none";
 }
 
+function normalizeMemoSubject(value: string | undefined): MemoSubject {
+  if (value === "Buy car" || value === "Complain") return value;
+  return "";
+}
+
 function normalizeYesNo(value: string | undefined): YesNo {
   return value === "Yes" ? "Yes" : "No";
 }
@@ -47,8 +71,69 @@ function normalizePackage(value: string | undefined): ContractPackage {
   return value === "Auction" || value === "Plus" || value === "Diamond" ? value : "";
 }
 
+function normalizeShowroomOwnership(value: string | undefined): ShowroomOwnership {
+  return value === "Client" ? "Client" : "Own";
+}
+
+function normalizeShowroomPackage(value: string | undefined): ShowroomPackage {
+  return value === "Basic" || value === "Standart" || value === "VIP" ? value : "";
+}
+
 function normalizeSource(value: string | undefined): LeadSourceInput {
   return validSources.includes(value as LeadSourceInput) ? (value as LeadSourceInput) : "other";
+}
+
+function normalizeHistory(input: LeadDto["history"] | undefined): LeadHistoryEvent[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((item) => typeof item === "object" && item !== null)
+    .map((item) => {
+      const event = item as Partial<LeadHistoryEvent>;
+      return {
+        id: typeof event.id === "string" && event.id ? event.id : `history_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        at: typeof event.at === "string" && !Number.isNaN(Date.parse(event.at)) ? new Date(event.at).toISOString() : new Date().toISOString(),
+        actor: typeof event.actor === "string" ? event.actor : "",
+        action: event.action === "created" || event.action === "updated" || event.action === "transferred" || event.action === "returned" || event.action === "memo" ? event.action : "updated",
+        message: typeof event.message === "string" ? event.message : "",
+      };
+    })
+    .sort((a, b) => b.at.localeCompare(a.at));
+}
+
+function normalizeNoteEntries(input: LeadDto["noteEntries"] | undefined): LeadNoteEntry[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((item) => typeof item === "object" && item !== null)
+    .map((item) => {
+      const entry = item as Partial<LeadNoteEntry>;
+      return {
+        id: typeof entry.id === "string" && entry.id ? entry.id : `note_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        at: typeof entry.at === "string" && !Number.isNaN(Date.parse(entry.at)) ? new Date(entry.at).toISOString() : new Date().toISOString(),
+        actor: typeof entry.actor === "string" ? entry.actor : "",
+        note: typeof entry.note === "string" ? entry.note : "",
+      };
+    })
+    .filter((entry) => entry.note.trim().length > 0)
+    .sort((a, b) => b.at.localeCompare(a.at));
+}
+
+function normalizeDocuments(input: LeadDto["accountDocuments"] | undefined): LeadDocument[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((item) => typeof item === "object" && item !== null)
+    .map((item) => {
+      const document = item as Partial<LeadDocument>;
+      return {
+        id: typeof document.id === "string" && document.id ? document.id : `doc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        name: typeof document.name === "string" ? document.name : "Document",
+        url: typeof document.url === "string" ? document.url : "",
+        pathname: typeof document.pathname === "string" ? document.pathname : "",
+        uploadedAt: typeof document.uploadedAt === "string" && !Number.isNaN(Date.parse(document.uploadedAt)) ? new Date(document.uploadedAt).toISOString() : new Date().toISOString(),
+        size: typeof document.size === "number" && Number.isFinite(document.size) ? document.size : 0,
+      };
+    })
+    .filter((document) => document.url || document.pathname)
+    .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt));
 }
 
 function normalizeLead(input: Partial<LeadDto> & Pick<LeadDto, "id">): LeadDto {
@@ -91,9 +176,18 @@ function normalizeLead(input: Partial<LeadDto> & Pick<LeadDto, "id">): LeadDto {
     servicedDate: input.servicedDate ?? "",
     secondKey: normalizeYesNo(input.secondKey),
     secondTireSet: normalizeYesNo(input.secondTireSet),
+    payoffDate: input.payoffDate ?? "",
+    aftersalesWarranty: normalizeYesNo(input.aftersalesWarranty),
+    aftersalesWarrantyDate: input.aftersalesWarrantyDate ?? "",
+    aftersalesWarrantyMileage: input.aftersalesWarrantyMileage ?? "",
     purchaseLocation: input.purchaseLocation ?? "",
     vatKey: input.vatKey ?? "",
     deliveryPrice: input.deliveryPrice ?? "",
+    showroomOwnership: normalizeShowroomOwnership(input.showroomOwnership),
+    showroomPackage: normalizeShowroomPackage(input.showroomPackage),
+    showroomContract: normalizeDocuments(input.showroomContract),
+    showroomReserved: normalizeYesNo(input.showroomReserved),
+    showroomSold: normalizeYesNo(input.showroomSold),
     warranty: normalizeYesNo(input.warranty),
     insuranceInfo: input.insuranceInfo ?? "",
     insuranceGoPrice: input.insuranceGoPrice ?? "",
@@ -124,6 +218,7 @@ function normalizeLead(input: Partial<LeadDto> & Pick<LeadDto, "id">): LeadDto {
     firstRegistrationDate: input.firstRegistrationDate ?? "",
     mileage: input.mileage ?? "",
     memoStatus: normalizeMemoStatus(input.memoStatus),
+    memoSubject: normalizeMemoSubject(input.memoSubject),
     memoContractLink: input.memoContractLink ?? "",
     memoDescription: input.memoDescription ?? "",
     memoAccountSubmittedAt: input.memoAccountSubmittedAt ?? "",
@@ -132,6 +227,16 @@ function normalizeLead(input: Partial<LeadDto> & Pick<LeadDto, "id">): LeadDto {
     memoOperationComment: input.memoOperationComment ?? "",
     memoOperationDecisionAt: input.memoOperationDecisionAt ?? "",
     memoEvents: Array.isArray(input.memoEvents) ? input.memoEvents : [],
+    callbackAt: input.callbackAt ?? "",
+    callbackNotes: input.callbackNotes ?? "",
+    callbackActivityId: input.callbackActivityId ?? "",
+    familyFollowUpActivityId: input.familyFollowUpActivityId ?? "",
+    pickupDate: input.pickupDate ?? "",
+    pickupActivityId: input.pickupActivityId ?? "",
+    accountDocuments: normalizeDocuments(input.accountDocuments),
+    returnToSalesComment: input.returnToSalesComment ?? "",
+    noteEntries: normalizeNoteEntries(input.noteEntries),
+    history: normalizeHistory(input.history),
     transferredToAccountAt: input.transferredToAccountAt ?? "",
     transferredToLogisticsAt: input.transferredToLogisticsAt ?? "",
     operationApprovedAt: input.operationApprovedAt ?? "",
@@ -185,87 +290,75 @@ type LeadRow = {
   payload: string;
 };
 
-function demoLeads(): LeadDto[] {
-  const base = new Date("2026-01-01T08:00:00.000Z").getTime();
-  const firstNames = ["Ivan", "Nikolay", "Elena", "Georgi", "Mila", "Petar", "Teodora", "Martin", "Raya", "Deyan"];
-  const lastNames = ["Petrov", "Georgiev", "Dimitrova", "Marinov", "Stoyanova", "Ivanov", "Koleva", "Todorov", "Nikolova", "Hristov"];
-  const brands = ["BMW", "Audi", "Mercedes", "VW", "Toyota", "Skoda"];
-  const models = ["X5", "A6", "GLC", "Tiguan", "RAV4", "Kodiaq"];
-  const leads: LeadDto[] = [];
-
-  for (let stageIndex = 0; stageIndex < pipelineStages.length; stageIndex += 1) {
-    const stage = pipelineStages[stageIndex];
-    for (let i = 0; i < 10; i += 1) {
-      const idx = stageIndex * 10 + i;
-      const firstName = firstNames[(stageIndex + i) % firstNames.length];
-      const lastName = lastNames[(stageIndex * 2 + i) % lastNames.length];
-      const brand = brands[idx % brands.length];
-      const model = models[(idx + 1) % models.length];
-      const year = 2018 + ((idx + 2) % 8);
-      const createdAt = new Date(base + idx * 10 * 60_000).toISOString();
-
-      leads.push(
-        normalizeLead({
-          id: `demo_lead_${stageIndex + 1}_${i + 1}`,
-          fullName: `${firstName} ${lastName}`,
-          phone: `+35988${String(1000000 + idx).slice(-7)}`,
-          email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}${idx}@example.com`,
-          egn: `90010${String(1000 + idx).slice(-4)}`,
-          address: "Sofia",
-          vehicleRequest: `${brand} ${model} ${year}`,
-          source: validSources[idx % validSources.length],
-          stage,
-          createdAt,
-          handoverDepartment: "sales",
-          handoverNote: `Demo lead for ${stage}`,
-        }),
-      );
-    }
-  }
-
-  return leads;
+function buildHistoryEvent(action: LeadHistoryEvent["action"], actor: string, message: string): LeadHistoryEvent {
+  return {
+    id: `history_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    at: new Date().toISOString(),
+    actor,
+    action,
+    message,
+  };
 }
 
-async function topUpPipelineStages() {
-  const stageRows = await prisma.crmLead.findMany({
-    where: {
-      isFamily: false,
-      handoverDepartment: "sales",
-      stage: { in: pipelineStages },
-    },
-    select: { stage: true },
-  });
-  const counts = Object.fromEntries(pipelineStages.map((stage) => [stage, 0])) as Record<LeadDto["stage"], number>;
-  for (const row of stageRows) {
-    const stage = normalizeStage(row.stage);
-    counts[stage] += 1;
-  }
+function buildNoteEntry(actor: string, note: string): LeadNoteEntry {
+  return {
+    id: `note_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    at: new Date().toISOString(),
+    actor,
+    note,
+  };
+}
 
-  const templates = demoLeads();
-  const additions: ReturnType<typeof toRow>[] = [];
-  const now = Date.now();
+function summarizeChangedFields(current: LeadDto, merged: LeadDto) {
+  const labels: Record<string, string> = {
+    fullName: "Client name",
+    phone: "Phone",
+    email: "Email",
+    egn: "EGN",
+    address: "Address",
+    vehicleRequest: "Vehicle request",
+    contractLink: "Contract link",
+    handoverNote: "Handover note",
+    handoverDepartment: "Department",
+    stage: "Status",
+    budget: "Budget",
+    car: "Automobile",
+    purchaseDate: "Purchase date",
+    am: "Account manager",
+    referral: "Referral",
+    discount: "Discount",
+    clientDiscount: "Client discount",
+    brand: "Brand",
+    model: "Model",
+    engine: "Engine",
+    vin: "VIN",
+    payoffDate: "Payoff date",
+    aftersalesWarranty: "AfterSales warranty",
+    aftersalesWarrantyDate: "AfterSales warranty date",
+    aftersalesWarrantyMileage: "AfterSales warranty mileage",
+    showroomOwnership: "Showroom ownership",
+    showroomPackage: "Showroom package",
+    showroomReserved: "Reserved",
+    showroomSold: "Sold",
+    callbackAt: "Callback date/time",
+    callbackNotes: "Callback notes",
+    pickupDate: "PickUp date",
+    returnToSalesComment: "Return comment",
+    memoSubject: "Memo subject",
+    memoContractLink: "Memo contract link",
+    memoDescription: "Memo description",
+    memoStatus: "Memo status",
+  };
 
-  for (let stageIndex = 0; stageIndex < pipelineStages.length; stageIndex += 1) {
-    const stage = pipelineStages[stageIndex];
-    const missing = Math.max(0, 10 - counts[stage]);
-    if (missing === 0) continue;
-    const stageTemplates = templates.filter((lead) => lead.stage === stage);
-    for (let i = 0; i < missing; i += 1) {
-      const sourceLead = stageTemplates[i % stageTemplates.length];
-      const offset = additions.length + i;
-      const seeded = normalizeLead({
-        ...sourceLead,
-        id: `seed_${Date.now()}_${stageIndex}_${i}_${Math.random().toString(36).slice(2, 8)}`,
-        fullName: `${sourceLead.fullName} Seed ${counts[stage] + i + 1}`,
-        createdAt: new Date(now + offset * 60_000).toISOString(),
-      });
-      additions.push(toRow(seeded));
-    }
+  const changed: string[] = [];
+  for (const key of Object.keys(labels)) {
+    const nextKey = key as keyof LeadDto;
+    const before = current[nextKey];
+    const after = merged[nextKey];
+    const same = JSON.stringify(before) === JSON.stringify(after);
+    if (!same) changed.push(labels[key]);
   }
-
-  if (additions.length > 0) {
-    await prisma.crmLead.createMany({ data: additions });
-  }
+  return changed;
 }
 
 async function ensureCrmLeadTable() {
@@ -289,53 +382,20 @@ async function ensureCrmLeadTable() {
     CREATE INDEX IF NOT EXISTS "CrmLead_isFamily_createdAt_idx"
     ON "CrmLead"("isFamily", "createdAt")
   `);
+  await prisma.$executeRawUnsafe(`
+    CREATE INDEX IF NOT EXISTS "CrmLead_sales_stage_idx"
+    ON "CrmLead"("handoverDepartment", "isFamily", "stage")
+  `);
 }
 
-async function importFromJsonIfNeeded() {
+async function seedLeadsIfNeeded() {
   await mkdir(dataDir, { recursive: true });
   await ensureCrmLeadTable();
-  const count = await prisma.crmLead.count();
-  if (count > 0) {
-    await topUpPipelineStages();
-    return;
-  }
-
-  let imported = false;
-  try {
-    const fileInfo = await stat(leadsPath);
-    if (fileInfo.size > maxSeedImportBytes) {
-      throw new Error("seed file too large");
-    }
-
-    const raw = await readFile(leadsPath, "utf8");
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) {
-      const chunkSize = 500;
-      for (let i = 0; i < parsed.length; i += chunkSize) {
-        const chunk = parsed.slice(i, i + chunkSize);
-        const rows = chunk.map((item) => {
-          const id = typeof item?.id === "string" && item.id ? item.id : `lead_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-          const lead = normalizeLead({ ...(item as Partial<LeadDto>), id });
-          return toRow(lead);
-        });
-        await prisma.crmLead.createMany({ data: rows });
-      }
-      imported = true;
-    }
-  } catch {
-    // fall through to demo seed
-  }
-
-  if (!imported) {
-    const rows = demoLeads().map(toRow);
-    await prisma.crmLead.createMany({ data: rows });
-  }
-  await topUpPipelineStages();
 }
 
 async function ensureReady() {
   if (!bootstrapPromise) {
-    bootstrapPromise = importFromJsonIfNeeded();
+    bootstrapPromise = hasBlobStore() ? seedBlobLeadsIfNeeded() : seedLeadsIfNeeded();
   }
   await bootstrapPromise;
 }
@@ -347,8 +407,69 @@ type ListLeadOptions = {
   limit?: number;
 };
 
+function applyListFilters(leads: LeadDto[], options: ListLeadOptions) {
+  let filtered = leads;
+
+  if (options.customerType === "new") {
+    filtered = filtered.filter((lead) => !lead.isFamily);
+  } else if (options.customerType === "existing") {
+    filtered = filtered.filter((lead) => lead.isFamily);
+  }
+
+  if (options.department) {
+    filtered = filtered.filter((lead) => {
+      if (options.department === "sales" && options.includeShowroom) {
+        return lead.handoverDepartment === "sales" || lead.handoverDepartment === "showroom";
+      }
+      return lead.handoverDepartment === options.department;
+    });
+  }
+
+  filtered = [...filtered].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  if (options.limit && options.limit > 0) {
+    filtered = filtered.slice(0, options.limit);
+  }
+
+  return filtered;
+}
+
+async function listLeadsFromBlob(options: ListLeadOptions = {}) {
+  const page = await list({ prefix: leadsBlobPrefix, limit: 5000 });
+  const blobs = await Promise.all(
+    page.blobs.map(async (blob) => {
+      const result = await get(blob.pathname, { access: "private", useCache: false });
+      if (!result || result.statusCode !== 200 || !result.stream) return null;
+      try {
+        return normalizeLead(JSON.parse(await streamToText(result.stream)) as LeadDto);
+      } catch {
+        return null;
+      }
+    }),
+  );
+  const normalized = blobs.filter((item): item is LeadDto => Boolean(item));
+  return applyListFilters(normalized, options);
+}
+
+async function readLeadFromBlob(id: string) {
+  const result = await get(leadBlobPath(id), { access: "private", useCache: false });
+  if (!result || result.statusCode !== 200 || !result.stream) return null;
+  try {
+    return normalizeLead(JSON.parse(await streamToText(result.stream)) as LeadDto);
+  } catch {
+    return null;
+  }
+}
+
+async function seedBlobLeadsIfNeeded() {
+  await Promise.resolve();
+}
+
 export async function listLeads(options: ListLeadOptions = {}) {
   await ensureReady();
+  if (hasBlobStore()) {
+    return listLeadsFromBlob(options);
+  }
+
   const where: {
     handoverDepartment?: { in: string[] } | string;
     isFamily?: boolean;
@@ -376,17 +497,85 @@ export async function listLeads(options: ListLeadOptions = {}) {
 
 export async function createLead(lead: Omit<LeadDto, "id" | "createdAt"> & { createdAt?: string }) {
   await ensureReady();
+  const actor = lead.lastUpdatedBy || "system";
   const created = normalizeLead({
     ...lead,
     id: `lead_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     createdAt: lead.createdAt,
   });
+  created.history = [buildHistoryEvent("created", actor, "Lead created."), ...created.history];
+  if (created.callbackNotes.trim()) {
+    created.noteEntries = [buildNoteEntry(actor, created.callbackNotes.trim()), ...created.noteEntries];
+  }
+
+  if (hasBlobStore()) {
+    await put(leadBlobPath(created.id), JSON.stringify(created, null, 2), {
+      access: "private",
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      contentType: "application/json; charset=utf-8",
+    });
+    return created;
+  }
+
   await prisma.crmLead.create({ data: toRow(created) });
   return created;
 }
 
 export async function updateLead(id: string, patch: Partial<Omit<LeadDto, "id">>) {
   await ensureReady();
+
+  if (hasBlobStore()) {
+    const current = await readLeadFromBlob(id);
+    if (!current) return null;
+
+    const merged = normalizeLead({
+      ...current,
+      ...patch,
+      id,
+      createdAt: patch.createdAt ?? current.createdAt,
+    });
+
+    const actor = merged.lastUpdatedBy || current.lastUpdatedBy || "system";
+    if (merged.callbackNotes.trim() && merged.callbackNotes.trim() !== current.callbackNotes.trim()) {
+      merged.noteEntries = [buildNoteEntry(actor, merged.callbackNotes.trim()), ...current.noteEntries];
+    } else {
+      merged.noteEntries = current.noteEntries;
+    }
+
+    const changedFields = summarizeChangedFields(current, merged);
+    if (changedFields.length > 0) {
+      const action =
+        current.handoverDepartment !== merged.handoverDepartment && merged.handoverDepartment === "sales"
+          ? "returned"
+          : current.handoverDepartment !== merged.handoverDepartment
+            ? "transferred"
+            : current.memoStatus !== merged.memoStatus || current.memoSubject !== merged.memoSubject
+              ? "memo"
+              : "updated";
+      const message =
+        action === "returned"
+          ? `Returned to Sales. ${merged.returnToSalesComment ? `Comment: ${merged.returnToSalesComment}` : ""}`.trim()
+          : action === "transferred"
+            ? `Transferred to ${merged.handoverDepartment}.`
+            : action === "memo"
+              ? `Memo updated: ${changedFields.join(", ")}.`
+              : `Updated: ${changedFields.join(", ")}.`;
+      merged.history = [buildHistoryEvent(action, actor, message), ...current.history];
+    } else {
+      merged.history = current.history;
+    }
+
+    await put(leadBlobPath(id), JSON.stringify(merged, null, 2), {
+      access: "private",
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      contentType: "application/json; charset=utf-8",
+    });
+
+    return merged;
+  }
+
   const row = await prisma.crmLead.findUnique({ where: { id } });
   if (!row) return null;
   const current = fromRow(row);
@@ -396,6 +585,36 @@ export async function updateLead(id: string, patch: Partial<Omit<LeadDto, "id">>
     id,
     createdAt: patch.createdAt ?? current.createdAt,
   });
+
+  const actor = merged.lastUpdatedBy || current.lastUpdatedBy || "system";
+  if (merged.callbackNotes.trim() && merged.callbackNotes.trim() !== current.callbackNotes.trim()) {
+    merged.noteEntries = [buildNoteEntry(actor, merged.callbackNotes.trim()), ...current.noteEntries];
+  } else {
+    merged.noteEntries = current.noteEntries;
+  }
+  const changedFields = summarizeChangedFields(current, merged);
+  if (changedFields.length > 0) {
+    const action =
+      current.handoverDepartment !== merged.handoverDepartment && merged.handoverDepartment === "sales"
+        ? "returned"
+        : current.handoverDepartment !== merged.handoverDepartment
+          ? "transferred"
+          : current.memoStatus !== merged.memoStatus || current.memoSubject !== merged.memoSubject
+            ? "memo"
+            : "updated";
+    const message =
+      action === "returned"
+        ? `Returned to Sales. ${merged.returnToSalesComment ? `Comment: ${merged.returnToSalesComment}` : ""}`.trim()
+        : action === "transferred"
+          ? `Transferred to ${merged.handoverDepartment}.`
+          : action === "memo"
+            ? `Memo updated: ${changedFields.join(", ")}.`
+            : `Updated: ${changedFields.join(", ")}.`;
+    merged.history = [buildHistoryEvent(action, actor, message), ...current.history];
+  } else {
+    merged.history = current.history;
+  }
+
   await prisma.crmLead.update({
     where: { id },
     data: {
@@ -412,6 +631,14 @@ export async function updateLead(id: string, patch: Partial<Omit<LeadDto, "id">>
 
 export async function deleteLead(id: string) {
   await ensureReady();
+
+  if (hasBlobStore()) {
+    const current = await readLeadFromBlob(id);
+    if (!current) return false;
+    await del(leadBlobPath(id));
+    return true;
+  }
+
   try {
     await prisma.crmLead.delete({ where: { id } });
     return true;

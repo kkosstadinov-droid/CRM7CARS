@@ -38,6 +38,22 @@ npx prisma generate
 npx prisma migrate dev --name init
 ```
 
+## Vercel Persistence
+
+For local development, leads continue to use SQLite via `DATABASE_URL`.
+
+Lead document uploads also work locally and are written to `public/uploads/lead-documents/`.
+
+For Vercel deployments, set `BLOB_READ_WRITE_TOKEN` so pipeline leads, activities, and uploaded lead documents are stored durably in Vercel Blob instead of the temporary `/tmp` filesystem. Without that token, lead document uploads are intentionally disabled in Vercel. Optionally override blob keys with `LEADS_BLOB_PATH` and `ACTIVITIES_BLOB_PATH`.
+
+## Auto Deploy
+
+GitHub Actions workflow `.github/workflows/vercel-production.yml` deploys to Vercel Production on every push to `main`.
+
+Required GitHub repository secret:
+
+- `VERCEL_TOKEN`
+
 ## Next Build Steps
 
 - Authentication and role-based access control

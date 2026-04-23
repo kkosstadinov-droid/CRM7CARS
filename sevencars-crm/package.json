@@ -3,15 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --webpack",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "smoke": "node scripts/smoke-test.mjs",
+    "stress": "node scripts/stress-test.mjs",
+    "verify": "npm run lint && npm run build",
     "postinstall": "prisma generate"
   },
   "dependencies": {
     "@prisma/adapter-better-sqlite3": "^7.4.2",
     "@prisma/client": "^7.4.2",
+    "@vercel/blob": "^2.3.1",
     "better-sqlite3": "^12.6.2",
     "next": "16.1.6",
     "react": "19.2.3",

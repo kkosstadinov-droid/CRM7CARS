@@ -37,14 +37,21 @@ yarn-error.log*
 .vercel
 
 # local runtime artifacts
+.github/
 dev.db
 dev.live.pid
 dev.live*.log
+dev*.pid
 dev*.log
+test*.pid
+test*.log
 start*.log
 smoke*.log
+webpack*.log
+*.cookies
 data/leads*.json
 data/*.tmp
+public/uploads/
 
 # typescript
 *.tsbuildinfo

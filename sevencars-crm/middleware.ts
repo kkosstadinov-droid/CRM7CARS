@@ -6,6 +6,11 @@ const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/auth/logout"];
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // Allow public assets such as logo files, uploaded documents and fonts.
+  if (/\.[^/]+$/.test(pathname)) {
+    return NextResponse.next();
+  }
+
   if (PUBLIC_PATHS.some((path) => pathname.startsWith(path))) {
     if (pathname === "/login" && request.cookies.get("sevencars_session")?.value) {
       return NextResponse.redirect(new URL("/", request.url));

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteLead, updateLead } from "@/lib/leads-store";
-import { sourceEnumToInput, sourceInputToEnum, splitFullName, splitVehicleRequest, stageToStatus, type ContractPackage, type LeadDto, type LeadStage, type MemoEvent, type MemoStatus, type RegistrationStatus, type YesNo } from "@/lib/leads";
+import { sourceEnumToInput, sourceInputToEnum, splitFullName, splitVehicleRequest, stageToStatus, type ContractPackage, type LeadDocument, type LeadDto, type LeadHistoryEvent, type LeadNoteEntry, type LeadStage, type MemoEvent, type MemoStatus, type MemoSubject, type RegistrationStatus, type ShowroomOwnership, type ShowroomPackage, type YesNo } from "@/lib/leads";
 
 type UpdateLeadBody = {
   fullName?: string;
@@ -39,9 +39,18 @@ type UpdateLeadBody = {
   servicedDate?: string;
   secondKey?: YesNo;
   secondTireSet?: YesNo;
+  payoffDate?: string;
+  aftersalesWarranty?: YesNo;
+  aftersalesWarrantyDate?: string;
+  aftersalesWarrantyMileage?: string;
   purchaseLocation?: string;
   vatKey?: string;
   deliveryPrice?: string;
+  showroomOwnership?: ShowroomOwnership;
+  showroomPackage?: ShowroomPackage;
+  showroomContract?: LeadDocument[];
+  showroomReserved?: YesNo;
+  showroomSold?: YesNo;
   warranty?: YesNo;
   insuranceInfo?: string;
   insuranceGoPrice?: string;
@@ -72,6 +81,7 @@ type UpdateLeadBody = {
   firstRegistrationDate?: string;
   mileage?: string;
   memoStatus?: MemoStatus;
+  memoSubject?: MemoSubject;
   memoContractLink?: string;
   memoDescription?: string;
   memoAccountSubmittedAt?: string;
@@ -80,6 +90,16 @@ type UpdateLeadBody = {
   memoOperationComment?: string;
   memoOperationDecisionAt?: string;
   memoEvents?: MemoEvent[];
+  callbackAt?: string;
+  callbackNotes?: string;
+  callbackActivityId?: string;
+  familyFollowUpActivityId?: string;
+  pickupDate?: string;
+  pickupActivityId?: string;
+  accountDocuments?: LeadDocument[];
+  returnToSalesComment?: string;
+  noteEntries?: LeadNoteEntry[];
+  history?: LeadHistoryEvent[];
   transferredToAccountAt?: string;
   transferredToLogisticsAt?: string;
   operationApprovedAt?: string;
@@ -144,9 +164,20 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (typeof body.servicedDate === "string") patch.servicedDate = body.servicedDate.trim();
   if (body.secondKey === "Yes" || body.secondKey === "No") patch.secondKey = body.secondKey;
   if (body.secondTireSet === "Yes" || body.secondTireSet === "No") patch.secondTireSet = body.secondTireSet;
+  if (typeof body.payoffDate === "string") patch.payoffDate = body.payoffDate.trim();
+  if (body.aftersalesWarranty === "Yes" || body.aftersalesWarranty === "No") patch.aftersalesWarranty = body.aftersalesWarranty;
+  if (typeof body.aftersalesWarrantyDate === "string") patch.aftersalesWarrantyDate = body.aftersalesWarrantyDate.trim();
+  if (typeof body.aftersalesWarrantyMileage === "string") patch.aftersalesWarrantyMileage = body.aftersalesWarrantyMileage.trim();
   if (typeof body.purchaseLocation === "string") patch.purchaseLocation = body.purchaseLocation.trim();
   if (typeof body.vatKey === "string") patch.vatKey = body.vatKey.trim();
   if (typeof body.deliveryPrice === "string") patch.deliveryPrice = body.deliveryPrice.trim();
+  if (body.showroomOwnership === "Own" || body.showroomOwnership === "Client") patch.showroomOwnership = body.showroomOwnership;
+  if (body.showroomPackage === "Basic" || body.showroomPackage === "Standart" || body.showroomPackage === "VIP" || body.showroomPackage === "") {
+    patch.showroomPackage = body.showroomPackage;
+  }
+  if (Array.isArray(body.showroomContract)) patch.showroomContract = body.showroomContract;
+  if (body.showroomReserved === "Yes" || body.showroomReserved === "No") patch.showroomReserved = body.showroomReserved;
+  if (body.showroomSold === "Yes" || body.showroomSold === "No") patch.showroomSold = body.showroomSold;
   if (body.warranty === "Yes" || body.warranty === "No") patch.warranty = body.warranty;
   if (typeof body.insuranceInfo === "string") patch.insuranceInfo = body.insuranceInfo.trim();
   if (typeof body.insuranceGoPrice === "string") patch.insuranceGoPrice = body.insuranceGoPrice.trim();
@@ -179,6 +210,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (body.memoStatus === "none" || body.memoStatus === "pending_teamlead" || body.memoStatus === "rejected_by_teamlead" || body.memoStatus === "pending_operation" || body.memoStatus === "rejected_by_operation" || body.memoStatus === "approved") {
     patch.memoStatus = body.memoStatus;
   }
+  if (body.memoSubject === "" || body.memoSubject === "Buy car" || body.memoSubject === "Complain") patch.memoSubject = body.memoSubject;
   if (typeof body.memoContractLink === "string") patch.memoContractLink = body.memoContractLink.trim();
   if (typeof body.memoDescription === "string") patch.memoDescription = body.memoDescription.trim();
   if (typeof body.memoAccountSubmittedAt === "string") patch.memoAccountSubmittedAt = body.memoAccountSubmittedAt.trim();
@@ -187,6 +219,16 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (typeof body.memoOperationComment === "string") patch.memoOperationComment = body.memoOperationComment.trim();
   if (typeof body.memoOperationDecisionAt === "string") patch.memoOperationDecisionAt = body.memoOperationDecisionAt.trim();
   if (Array.isArray(body.memoEvents)) patch.memoEvents = body.memoEvents;
+  if (typeof body.callbackAt === "string") patch.callbackAt = body.callbackAt.trim();
+  if (typeof body.callbackNotes === "string") patch.callbackNotes = body.callbackNotes.trim();
+  if (typeof body.callbackActivityId === "string") patch.callbackActivityId = body.callbackActivityId.trim();
+  if (typeof body.familyFollowUpActivityId === "string") patch.familyFollowUpActivityId = body.familyFollowUpActivityId.trim();
+  if (typeof body.pickupDate === "string") patch.pickupDate = body.pickupDate.trim();
+  if (typeof body.pickupActivityId === "string") patch.pickupActivityId = body.pickupActivityId.trim();
+  if (Array.isArray(body.accountDocuments)) patch.accountDocuments = body.accountDocuments;
+  if (typeof body.returnToSalesComment === "string") patch.returnToSalesComment = body.returnToSalesComment.trim();
+  if (Array.isArray(body.noteEntries)) patch.noteEntries = body.noteEntries;
+  if (Array.isArray(body.history)) patch.history = body.history;
   if (typeof body.transferredToAccountAt === "string") patch.transferredToAccountAt = body.transferredToAccountAt.trim();
   if (typeof body.transferredToLogisticsAt === "string") patch.transferredToLogisticsAt = body.transferredToLogisticsAt.trim();
   if (typeof body.operationApprovedAt === "string") patch.operationApprovedAt = body.operationApprovedAt.trim();

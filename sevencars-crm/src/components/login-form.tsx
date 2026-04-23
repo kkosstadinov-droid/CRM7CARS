@@ -1,5 +1,4 @@
 "use client";
-
 import Image from "next/image";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -38,7 +37,15 @@ export function LoginForm() {
   return (
     <form onSubmit={onSubmit} className="card mx-auto w-full max-w-md space-y-4 p-6">
       <div className="flex items-center gap-3">
-        <Image src="/7cars-logo.svg" alt="7CARS logo" width={110} height={40} />
+        <Image
+          src="/7cars-logo.svg"
+          alt="7CARS logo"
+          width={110}
+          height={40}
+          unoptimized
+          priority
+          className="h-auto w-[110px] shrink-0 object-contain"
+        />
         <h1 className="brand-title text-2xl font-bold">CRM Login</h1>
       </div>
       <p className="text-sm text-gray-600">Sign in with your profile credentials.</p>

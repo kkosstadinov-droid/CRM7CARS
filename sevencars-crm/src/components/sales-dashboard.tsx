@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type HTMLInputTypeAttribute, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type HTMLInputTypeAttribute, type ReactNode } from "react";
 import type { ActivityDto } from "@/lib/activities";
 import type { AppRole } from "@/lib/auth";
-import type { ContractPackage, LeadDto, LeadSourceInput, LeadStage, MemoEvent, MemoStatus, RegistrationStatus, YesNo } from "@/lib/leads";
+import { callbackStages, type ContractPackage, type LeadDocument, type LeadDto, type LeadHistoryEvent, type LeadNoteEntry, type LeadSourceInput, type LeadStage, type MemoEvent, type MemoStatus, type MemoSubject, type RegistrationStatus, type ShowroomOwnership, type ShowroomPackage, type YesNo } from "@/lib/leads";
 
 type SearchMode = "all" | "name" | "email" | "phone";
 type MemoSearchMode = "name" | "egn" | "phone" | "vin";
+type AddLeadWindowKind = "sales" | "showroom" | null;
 type LeadDraft = {
   fullName: string;
   phone: string;
@@ -39,6 +40,15 @@ type LeadDraft = {
   purchaseLocation: string;
   vatKey: string;
   deliveryPrice: string;
+  showroomOwnership: ShowroomOwnership;
+  showroomPackage: ShowroomPackage;
+  showroomContract: LeadDocument[];
+  showroomReserved: YesNo;
+  showroomSold: YesNo;
+  showroomDescription: string;
+  showroomGoPrice: string;
+  showroomCascoPrice: string;
+  tiresInfo: string;
   warranty: YesNo;
   firstRegistrationDate: string;
   mileage: string;
@@ -49,9 +59,10 @@ type LeadDraft = {
 };
 
 const leadSourceOptions: LeadSourceInput[] = ["call", "mail", "whatsapp", "viber", "facebook", "instagram", "other"];
-const stageOptions: LeadStage[] = ["New leed", "Contacted", "No Answer", "Faild", "Potential", "Contract"];
-const accountStageOptions: LeadStage[] = ["Contacted", "No Answer", "Faild", "Potential", "Contract"];
+const stageOptions: LeadStage[] = ["New Lead", "Potential", "W/o Potential", "Need Time", "No Answer", "Message", "Contract"];
 const contractPackageOptions: ContractPackage[] = ["", "Auction", "Plus", "Diamond"];
+const showroomPackageOptions: ShowroomPackage[] = ["", "Basic", "Standart", "VIP"];
+const memoSubjectOptions: MemoSubject[] = ["", "Buy car", "Complain"];
 const yesNoOptions: YesNo[] = ["No", "Yes"];
 const registrationOptions: RegistrationStatus[] = ["No", "Yes", "Yes transit"];
 const detailingOptions = ["", "Пастиране", "Полиране", "Пране", "Керамика", "Комплексно", "Детайлно"];
@@ -60,120 +71,16 @@ const activityHours = Array.from({ length: 24 }, (_, i) => String(i).padStart(2,
 const next30Dates = Array.from({ length: 30 }, (_, i) => {
   const d = new Date();
   d.setDate(d.getDate() + i);
-  return d.toISOString().slice(0, 10);
+  return formatLocalDateInput(d);
 });
 const leadsPerPage = 10;
 const uiLocale = "bg-BG";
 const uiTimeZone = "Europe/Sofia";
 const requestTimeoutMs = 20000;
+const dashboardPollMs = 10000;
 
-async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = requestTimeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(input, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function toLocal(iso: string) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
-}
-function startsAt(date: string, hour: string, minute: string) {
-  return new Date(`${date}T${hour}:${minute}:00`).toISOString();
-}
-function makeGrid(date: Date) {
-  const first = new Date(date.getFullYear(), date.getMonth(), 1);
-  const last = new Date(date.getFullYear(), date.getMonth() + 1, 0);
-  const offset = (first.getDay() + 6) % 7;
-  const cells = Math.ceil((offset + last.getDate()) / 7) * 7;
-  return Array.from({ length: cells }, (_, i) => {
-    const day = i - offset + 1;
-    if (day < 1 || day > last.getDate()) return { day: null as number | null, iso: null as string | null };
-    const d = new Date(date.getFullYear(), date.getMonth(), day);
-    return { day, iso: d.toISOString().slice(0, 10) };
-  });
-}
-
-function normalizeShowroomYear(value: string | null | undefined) {
-  return String(value ?? "").replace(/\D/g, "").slice(0, 4);
-}
-
-function asNumber(value: string | null | undefined) {
-  const normalized = String(value ?? "").replace(",", ".").replace(/[^0-9.-]/g, "");
-  const num = Number.parseFloat(normalized);
-  return Number.isFinite(num) ? num : 0;
-}
-
-function formatEuroAmount(value: number, hasInput: boolean) {
-  if (!hasInput) return "";
-  return new Intl.NumberFormat("bg-BG", { style: "currency", currency: "EUR", minimumFractionDigits: 2 }).format(value);
-}
-
-function formatUiDateTime(iso: string) {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat(uiLocale, { dateStyle: "short", timeStyle: "short", timeZone: uiTimeZone }).format(date);
-}
-
-function formatUiMonth(date: Date) {
-  return new Intl.DateTimeFormat(uiLocale, { month: "long", year: "numeric", timeZone: uiTimeZone }).format(date);
-}
-
-function roleDepartment(role: AppRole): "sales" | "account" | "logistics" | "all" {
-  if (role === "Boss") return "all";
-  if (role === "Sales") return "sales";
-  if (role === "Showroom") return "sales";
-  if (role === "AccountManager") return "account";
-  if (role === "TeamLeadAM") return "account";
-  if (role === "Logistics" || role === "Service" || role === "Insurance") return "logistics";
-  if (role === "OperationManager") return "all";
-  return "all";
-}
-
-function roleLabel(role: AppRole) {
-  if (role === "Showroom") return "Showroom";
-  if (role === "Logistics") return "After Sales";
-  if (role === "Service") return "Service";
-  if (role === "Insurance") return "Insurance";
-  if (role === "TeamLeadAM") return "Team Lead AM";
-  if (role === "OperationManager") return "Operation Manager";
-  return role;
-}
-
-function assignedUserLabel(index: number) {
-  return index % 2 === 0 ? "Sales1" : "Sales2";
-}
-
-export function SalesDashboard({ role = "Sales", readOnlyView = false, username = "" }: { role?: AppRole; readOnlyView?: boolean; username?: string }) {
-  const [leads, setLeads] = useState<LeadDto[]>([]);
-  const [original, setOriginal] = useState<Record<string, LeadDto>>({});
-  const [saving, setSaving] = useState<Record<string, boolean>>({});
-  const [transferStage, setTransferStage] = useState<Record<string, LeadStage>>({});
-  const [activities, setActivities] = useState<ActivityDto[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  const [leadWindowId, setLeadWindowId] = useState<string | null>(null);
-  const [dayWindowDate, setDayWindowDate] = useState<string | null>(null);
-
-  const [showLeadSearch, setShowLeadSearch] = useState(false);
-  const [leadSearch, setLeadSearch] = useState("");
-  const [leadMode, setLeadMode] = useState<SearchMode>("all");
-  const [leadPage, setLeadPage] = useState(1);
-  const [showClientSearch, setShowClientSearch] = useState(false);
-  const [clientSearch, setClientSearch] = useState("");
-  const [clientMode, setClientMode] = useState<SearchMode>("all");
-  const [basicInfoOpen, setBasicInfoOpen] = useState(true);
-  const [amInfoOpen, setAmInfoOpen] = useState(false);
-  const [addonInfoOpen, setAddonInfoOpen] = useState(false);
-
-  const [addingLead, setAddingLead] = useState(false);
-  const [draft, setDraft] = useState<LeadDraft>({
+function createEmptyLeadDraft(): LeadDraft {
+  return {
     fullName: "",
     phone: "",
     email: "",
@@ -205,6 +112,15 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
     purchaseLocation: "",
     vatKey: "",
     deliveryPrice: "",
+    showroomOwnership: "Own",
+    showroomPackage: "",
+    showroomContract: [],
+    showroomReserved: "No",
+    showroomSold: "No",
+    showroomDescription: "",
+    showroomGoPrice: "",
+    showroomCascoPrice: "",
+    tiresInfo: "",
     warranty: "No",
     firstRegistrationDate: "",
     mileage: "",
@@ -212,7 +128,198 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
     inspection: "No",
     inspectionProtocolLink: "",
     serviceOfferLink: "",
+  };
+}
+
+function formatLocalDateInput(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = requestTimeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function toLocal(iso: string) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+function startsAt(date: string, hour: string, minute: string) {
+  return new Date(`${date}T${hour}:${minute}:00`).toISOString();
+}
+function dateOnlyToIso(date: string, hour = 9, minute = 0) {
+  return new Date(`${date}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00`).toISOString();
+}
+function addDays(dateIso: string, days: number) {
+  const date = new Date(dateIso);
+  date.setDate(date.getDate() + days);
+  return date.toISOString();
+}
+function isCallbackStage(stage: LeadStage) {
+  return callbackStages.includes(stage);
+}
+function makeGrid(date: Date) {
+  const first = new Date(date.getFullYear(), date.getMonth(), 1);
+  const last = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+  const offset = (first.getDay() + 6) % 7;
+  const cells = Math.ceil((offset + last.getDate()) / 7) * 7;
+  return Array.from({ length: cells }, (_, i) => {
+    const day = i - offset + 1;
+    if (day < 1 || day > last.getDate()) return { day: null as number | null, iso: null as string | null };
+    const d = new Date(date.getFullYear(), date.getMonth(), day);
+    return { day, iso: formatLocalDateInput(d) };
   });
+}
+
+function normalizeShowroomYear(value: string | null | undefined) {
+  return String(value ?? "").replace(/\D/g, "").slice(0, 4);
+}
+
+function isClientOwnedShowroomVehicle(ownership: ShowroomOwnership) {
+  return ownership === "Client";
+}
+
+function buildShowroomVehicleRequest(draft: Pick<LeadDraft, "brand" | "model" | "firstRegistrationDate">) {
+  return [draft.brand.trim(), draft.model.trim(), draft.firstRegistrationDate.trim()].filter(Boolean).join(" ");
+}
+
+function showroomLeadDescription(lead: Pick<LeadDto, "addonOther"> | Pick<LeadDraft, "showroomDescription">) {
+  return "addonOther" in lead ? lead.addonOther : lead.showroomDescription;
+}
+
+function showroomSortValue(lead: LeadDto) {
+  if (lead.showroomSold === "Yes") return 2;
+  if (lead.showroomReserved === "Yes") return 1;
+  return 0;
+}
+
+function compareShowroomLeads(a: LeadDto, b: LeadDto) {
+  const priority = showroomSortValue(a) - showroomSortValue(b);
+  if (priority !== 0) return priority;
+  return a.createdAt.localeCompare(b.createdAt);
+}
+
+function asNumber(value: string | null | undefined) {
+  const normalized = String(value ?? "").replace(",", ".").replace(/[^0-9.-]/g, "");
+  const num = Number.parseFloat(normalized);
+  return Number.isFinite(num) ? num : 0;
+}
+
+function formatEuroAmount(value: number, hasInput: boolean) {
+  if (!hasInput) return "";
+  return new Intl.NumberFormat("bg-BG", { style: "currency", currency: "EUR", minimumFractionDigits: 2 }).format(value);
+}
+
+function formatUiDateTime(iso: string) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat(uiLocale, { dateStyle: "short", timeStyle: "short", timeZone: uiTimeZone }).format(date);
+}
+
+function formatUiMonth(date: Date) {
+  return new Intl.DateTimeFormat(uiLocale, { month: "long", year: "numeric", timeZone: uiTimeZone }).format(date);
+}
+
+function toUiDateKey(value: Date | string) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("sv-SE", {
+    timeZone: uiTimeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function normalizeSearchValue(value: string | null | undefined) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function valueMatchesSelectedOption(value: string | null | undefined, filter: string) {
+  const normalizedFilter = normalizeSearchValue(filter);
+  if (!normalizedFilter) return true;
+  return normalizeSearchValue(value) === normalizedFilter;
+}
+
+function matchesLeadSearch(lead: LeadDto, query: string, mode: SearchMode | MemoSearchMode) {
+  const q = normalizeSearchValue(query);
+  if (!q) return true;
+
+  const name = normalizeSearchValue(lead.fullName);
+  const email = normalizeSearchValue(lead.email);
+  const phone = normalizeSearchValue(lead.phone);
+  const egn = normalizeSearchValue(lead.egn);
+  const vin = normalizeSearchValue(lead.vin);
+  const vehicle = normalizeSearchValue(lead.vehicleRequest);
+
+  if (mode === "name") return name.includes(q);
+  if (mode === "email") return email.includes(q);
+  if (mode === "phone") return phone.includes(q);
+  if (mode === "egn") return egn.includes(q);
+  if (mode === "vin") return vin.includes(q);
+
+  return [name, email, phone, egn, vin, vehicle].some((value) => value.includes(q));
+}
+
+function roleDepartment(role: AppRole): "sales" | "account" | "logistics" | "all" {
+  if (role === "Boss") return "all";
+  if (role === "Sales") return "sales";
+  if (role === "Showroom") return "sales";
+  if (role === "AccountManager") return "account";
+  if (role === "TeamLeadAM") return "account";
+  if (role === "Logistics" || role === "Service" || role === "Insurance") return "logistics";
+  if (role === "OperationManager") return "all";
+  return "all";
+}
+
+function roleLabel(role: AppRole) {
+  if (role === "Showroom") return "Showroom";
+  if (role === "Logistics") return "After Sales";
+  if (role === "Service") return "Service";
+  if (role === "Insurance") return "Insurance";
+  if (role === "TeamLeadAM") return "Team Lead AM";
+  if (role === "OperationManager") return "Operation Manager";
+  return role;
+}
+
+export function SalesDashboard({ role = "Sales", readOnlyView = false, username = "" }: { role?: AppRole; readOnlyView?: boolean; username?: string }) {
+  const [pipelineFilters, setPipelineFilters] = useState<Record<string, string>>({});
+  const [leads, setLeads] = useState<LeadDto[]>([]);
+  const [original, setOriginal] = useState<Record<string, LeadDto>>({});
+  const [saving, setSaving] = useState<Record<string, boolean>>({});
+  const [transferStage, setTransferStage] = useState<Record<string, LeadStage>>({});
+  const [activities, setActivities] = useState<ActivityDto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const [leadWindowId, setLeadWindowId] = useState<string | null>(null);
+  const [dayWindowDate, setDayWindowDate] = useState<string | null>(null);
+  const [activityModalDate, setActivityModalDate] = useState<string | null>(null);
+
+  const [showLeadSearch, setShowLeadSearch] = useState(false);
+  const [leadSearch, setLeadSearch] = useState("");
+  const [leadMode, setLeadMode] = useState<SearchMode>("all");
+  const [leadPage, setLeadPage] = useState(1);
+  const [showClientSearch, setShowClientSearch] = useState(false);
+  const [clientSearch, setClientSearch] = useState("");
+  const [clientMode, setClientMode] = useState<SearchMode>("all");
+  const [basicInfoOpen, setBasicInfoOpen] = useState(true);
+  const [amInfoOpen, setAmInfoOpen] = useState(false);
+  const [addonInfoOpen, setAddonInfoOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(true);
+
+  const [addingLead, setAddingLead] = useState(false);
+  const [draft, setDraft] = useState<LeadDraft>(createEmptyLeadDraft);
 
   const [month, setMonth] = useState(new Date());
   const [showActivityForm, setShowActivityForm] = useState(false);
@@ -222,45 +329,48 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
   const [memoSearch, setMemoSearch] = useState("");
   const [memoSearchMode, setMemoSearchMode] = useState<MemoSearchMode>("name");
   const [memoLeadId, setMemoLeadId] = useState("");
-  const [memoContractLink, setMemoContractLink] = useState("");
+  const [memoSubject, setMemoSubject] = useState<MemoSubject>("");
   const [memoDescription, setMemoDescription] = useState("");
   const [memoReviewComment, setMemoReviewComment] = useState("");
   const [memoSaving, setMemoSaving] = useState(false);
+  const [uploadingDocuments, setUploadingDocuments] = useState<Record<string, boolean>>({});
+  const [returnComment, setReturnComment] = useState("");
   const [operationView, setOperationView] = useState<"all" | "sales" | "account" | "logistics">("all");
   const [pipelineType, setPipelineType] = useState<"new" | "existing">("new");
+  const documentInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [uploadingDraftShowroomContract, setUploadingDraftShowroomContract] = useState(false);
+  const [uploadingLeadShowroomContract, setUploadingLeadShowroomContract] = useState(false);
+  const [addLeadWindowMode, setAddLeadWindowMode] = useState(false);
+  const [addLeadWindowKind, setAddLeadWindowKind] = useState<AddLeadWindowKind>(null);
   const isShowroomRole = role === "Showroom";
+  const createAsShowroomLead = addLeadWindowMode ? addLeadWindowKind === "showroom" : isShowroomRole;
   const leadsEndpoint = useMemo(() => {
     const params = new URLSearchParams();
-    params.set("customerType", pipelineType);
-    if (pipelineType === "existing") {
-      // Existing (Family) pipeline must be visible for every role.
-      params.set("limit", "5000");
-    } else if (role === "Sales") {
+    params.set("limit", "5000");
+    if (role === "Sales") {
       params.set("department", "sales");
-      params.set("includeShowroom", "1");
-      params.set("limit", "2500");
     } else if (role === "Showroom") {
       params.set("department", "showroom");
-      params.set("limit", "2500");
     } else if (role === "AccountManager" || role === "TeamLeadAM") {
       params.set("department", "account");
-      params.set("limit", "2500");
     } else if (role === "Logistics" || role === "Service" || role === "Insurance") {
       params.set("department", "logistics");
-      params.set("limit", "2500");
     } else if (role === "OperationManager" && operationView !== "all") {
       params.set("department", operationView);
-      params.set("limit", "2500");
-    } else if (role === "OperationManager") {
-      params.set("limit", "2500");
     }
     const query = params.toString();
     return query ? `/api/leads?${query}` : "/api/leads";
-  }, [operationView, pipelineType, role]);
+  }, [operationView, role]);
 
   const reloadDashboardData = useCallback(async () => {
     try {
-      const [lr, ar] = await Promise.all([fetchWithTimeout(leadsEndpoint, { cache: "no-store" }), fetchWithTimeout("/api/activities", { cache: "no-store" })]);
+      const activityParams = new URLSearchParams();
+      if (username) {
+        activityParams.set("ownerUsername", username.toLowerCase());
+      }
+      const activitiesEndpoint = activityParams.toString() ? `/api/activities?${activityParams.toString()}` : "/api/activities";
+      const [lr, ar] = await Promise.all([fetchWithTimeout(leadsEndpoint, { cache: "no-store" }), fetchWithTimeout(activitiesEndpoint, { cache: "no-store" })]);
       if (!lr.ok || !ar.ok) throw new Error();
       const ls = (await lr.json()) as LeadDto[];
       const as = (await ar.json()) as ActivityDto[];
@@ -276,13 +386,13 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
     } finally {
       setLoading(false);
     }
-  }, [leadsEndpoint]);
+  }, [leadsEndpoint, username]);
 
   useEffect(() => {
     if (leadWindowId || showMemoPanel || memoLeadId) return;
     setLoading(true);
     const initial = setTimeout(() => void reloadDashboardData(), 0);
-    const timer = setInterval(() => void reloadDashboardData(), 30000);
+    const timer = setInterval(() => void reloadDashboardData(), dashboardPollMs);
     return () => {
       clearTimeout(initial);
       clearInterval(timer);
@@ -290,54 +400,98 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
   }, [reloadDashboardData, leadWindowId, memoLeadId, showMemoPanel]);
 
   useEffect(() => {
+    return () => {
+      if (refreshTimeoutRef.current) {
+        clearTimeout(refreshTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if ((role !== "Sales" && !isShowroomRole) || typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const profile = params.get("profile");
+    const showroomAddLead = params.get("showroomAddLead") === "1";
+    const addLeadInWindow = params.get("addLead") === "1" || showroomAddLead;
+    setAddLeadWindowMode(addLeadInWindow);
+    setAddLeadWindowKind(addLeadInWindow ? (showroomAddLead || profile === "Showroom" ? "showroom" : "sales") : null);
+    if (addLeadInWindow) {
+      setAddingLead(true);
+    }
+  }, [isShowroomRole, role]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || addLeadWindowMode) return;
+
+    function handlePopupMessage(event: MessageEvent) {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type !== "sevencars:add-lead-saved") return;
+      void reloadDashboardData();
+    }
+
+    window.addEventListener("message", handlePopupMessage);
+    return () => window.removeEventListener("message", handlePopupMessage);
+  }, [addLeadWindowMode, reloadDashboardData]);
+
+  useEffect(() => {
     if (!leadWindowId) return;
     setBasicInfoOpen(true);
-    setAmInfoOpen(false);
+    setAmInfoOpen(role === "AccountManager");
     setAddonInfoOpen(false);
-  }, [leadWindowId]);
+    setHistoryOpen(true);
+    setReturnComment("");
+  }, [leadWindowId, role]);
 
   useEffect(() => {
     if (!memoLeadId) {
-      setMemoContractLink("");
+      setMemoSubject("");
       setMemoDescription("");
       return;
     }
     const selected = leads.find((l) => l.id === memoLeadId);
     if (!selected) return;
-    setMemoContractLink(selected.memoContractLink);
+    setMemoSubject(selected.memoSubject);
     setMemoDescription(selected.memoDescription);
   }, [memoLeadId, leads]);
 
   const visibleByRole = useMemo(() => {
-    if (pipelineType === "existing") {
-      return leads;
-    }
+    const familyFiltered = leads.filter((lead) => (pipelineType === "existing" ? lead.isFamily : !lead.isFamily));
     if (role === "Showroom") {
-      return leads.filter((l) => l.handoverDepartment === "showroom");
+      return familyFiltered.filter((lead) => lead.handoverDepartment === "showroom");
     }
     if (role === "OperationManager") {
-      if (operationView === "all") return leads;
-      return leads.filter((l) => l.handoverDepartment === operationView);
+      if (operationView === "all") return familyFiltered;
+      return familyFiltered.filter((lead) => lead.handoverDepartment === operationView);
     }
     const dep = roleDepartment(role);
-    if (dep === "all") return leads;
-    return leads.filter((l) => l.handoverDepartment === dep || l.handoverDepartment === "showroom");
+    if (dep === "all") return familyFiltered;
+    return familyFiltered.filter((lead) => lead.handoverDepartment === dep);
   }, [leads, operationView, pipelineType, role]);
 
   const filteredLeads = useMemo(() => {
-    const q = leadSearch.trim().toLowerCase();
-    const all = [...visibleByRole].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    if (!q) return all;
-    return all.filter((l) => {
-      const n = l.fullName.toLowerCase().includes(q);
-      const e = l.email.toLowerCase().includes(q);
-      const p = l.phone.toLowerCase().includes(q);
-      if (leadMode === "name") return n;
-      if (leadMode === "email") return e;
-      if (leadMode === "phone") return p;
-      return n || e || p;
+    const all = [...visibleByRole].sort((a, b) => {
+      if (isShowroomRole) {
+        return compareShowroomLeads(a, b);
+      }
+      return b.createdAt.localeCompare(a.createdAt);
     });
-  }, [visibleByRole, leadSearch, leadMode]);
+    return all
+      .filter((lead) => matchesLeadSearch(lead, leadSearch, leadMode))
+      .filter((lead) => {
+        if (isShowroomRole) {
+          return true;
+        }
+
+        if (pipelineType === "existing") {
+          return valueMatchesSelectedOption(lead.stage, pipelineFilters.status);
+        }
+
+        return (
+          valueMatchesSelectedOption(lead.stage, pipelineFilters.status) &&
+          valueMatchesSelectedOption(lead.lastUpdatedBy, pipelineFilters.user)
+        );
+      });
+  }, [visibleByRole, leadSearch, leadMode, isShowroomRole, pipelineFilters, pipelineType]);
   const totalLeadPages = Math.max(1, Math.ceil(filteredLeads.length / leadsPerPage));
   const paginatedLeads = useMemo(() => {
     const start = (leadPage - 1) * leadsPerPage;
@@ -346,7 +500,7 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
 
   useEffect(() => {
     setLeadPage(1);
-  }, [leadSearch, leadMode, role]);
+  }, [leadSearch, leadMode, operationView, pipelineType, role, pipelineFilters]);
   useEffect(() => {
     if (leadPage > totalLeadPages) setLeadPage(totalLeadPages);
   }, [leadPage, totalLeadPages]);
@@ -359,10 +513,16 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
 
   const leadWindow = useMemo(() => leads.find((l) => l.id === leadWindowId) ?? null, [leads, leadWindowId]);
   const effectiveLeadStage = leadWindow ? transferStage[leadWindow.id] ?? leadWindow.stage : null;
-  const stageOptionsByRole = role === "AccountManager" ? accountStageOptions : stageOptions;
+  const stageOptionsByRole = stageOptions;
+  const pipelineStatusFilterOptions = useMemo(() => ["", ...stageOptions], []);
+  const pipelineUserFilterOptions = useMemo(
+    () => ["", ...Array.from(new Set(visibleByRole.map((lead) => lead.lastUpdatedBy).filter(Boolean))).sort((a, b) => a.localeCompare(b))],
+    [visibleByRole],
+  );
   const sectionedView = true;
   const canShowAmInfo = role !== "Sales";
-  const canShowAddOnInfo = role !== "Sales" && role !== "AccountManager" && role !== "TeamLeadAM";
+  const canShowAddOnInfo = role !== "Sales" && role !== "Showroom" && role !== "AccountManager" && role !== "TeamLeadAM";
+  const canShowLeadHistory = role !== "Sales" && role !== "AccountManager";
   const basicInfoReadOnly = false;
   const amInfoReadOnly = false;
   const stageReadOnly = readOnlyView || (role !== "Sales" && role !== "AccountManager" && role !== "Admin");
@@ -375,7 +535,7 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
   const dashboardReadOnly = false;
   const isProcessedLead = useCallback((lead: LeadDto) => {
     return (
-      lead.stage !== "New leed" ||
+      lead.stage !== "New Lead" ||
       !!lead.transferredToAccountAt ||
       !!lead.transferredToLogisticsAt ||
       !!lead.operationApprovedAt ||
@@ -453,28 +613,21 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
     });
   }, [clientSearch, clientMode, roleClients]);
 
+  const filterMemoSource = useCallback((items: LeadDto[]) => {
+    return items.filter((lead) => matchesLeadSearch(lead, memoSearch, memoSearchMode));
+  }, [memoSearch, memoSearchMode]);
   const accountPipelineLeads = useMemo(
-    () => leads.filter((l) => l.handoverDepartment === "account").sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [leads],
+    () => filterMemoSource(leads.filter((l) => l.handoverDepartment === "account").sort((a, b) => b.createdAt.localeCompare(a.createdAt))),
+    [filterMemoSource, leads],
   );
-  const filteredMemoLeads = useMemo(() => {
-    const q = memoSearch.trim().toLowerCase();
-    if (!q) return accountPipelineLeads;
-    return accountPipelineLeads.filter((l) => {
-      if (memoSearchMode === "name") return String(l.fullName ?? "").toLowerCase().includes(q);
-      if (memoSearchMode === "egn") return String(l.egn ?? "").toLowerCase().includes(q);
-      if (memoSearchMode === "phone") return String(l.phone ?? "").toLowerCase().includes(q);
-      return String(l.vin ?? "").toLowerCase().includes(q);
-    });
-  }, [accountPipelineLeads, memoSearch, memoSearchMode]);
   const selectedMemoLead = useMemo(() => leads.find((l) => l.id === memoLeadId) ?? null, [leads, memoLeadId]);
   const teamLeadQueue = useMemo(
-    () => leads.filter((l) => l.memoStatus === "pending_teamlead").sort((a, b) => b.memoAccountSubmittedAt.localeCompare(a.memoAccountSubmittedAt)),
-    [leads],
+    () => filterMemoSource(leads.filter((l) => l.memoStatus === "pending_teamlead").sort((a, b) => b.memoAccountSubmittedAt.localeCompare(a.memoAccountSubmittedAt))),
+    [filterMemoSource, leads],
   );
   const operationQueue = useMemo(
-    () => leads.filter((l) => l.memoStatus === "pending_operation").sort((a, b) => b.memoTeamLeadDecisionAt.localeCompare(a.memoTeamLeadDecisionAt)),
-    [leads],
+    () => filterMemoSource(leads.filter((l) => l.memoStatus === "pending_operation").sort((a, b) => b.memoTeamLeadDecisionAt.localeCompare(a.memoTeamLeadDecisionAt))),
+    [filterMemoSource, leads],
   );
   const accountReturnedMemos = useMemo(
     () => leads.filter((l) => l.handoverDepartment === "account" && (l.memoStatus === "rejected_by_teamlead" || l.memoStatus === "rejected_by_operation")),
@@ -484,25 +637,99 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
 
   const roleActivityDept = roleDepartment(role) === "all" ? null : roleDepartment(role);
   const futureActivities = useMemo(() => {
+    const todayKey = toUiDateKey(new Date());
     return activities
-      .filter((a) => a.status === "planned" && new Date(a.startsAt) >= new Date())
+      .filter((a) => a.status === "planned" && toUiDateKey(a.startsAt) >= todayKey)
       .filter((a) => (roleActivityDept ? a.department === roleActivityDept : true))
       .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
   }, [activities, roleActivityDept]);
-  const dayActivities = useMemo(() => futureActivities.filter((a) => a.startsAt.slice(0, 10) === dayWindowDate), [futureActivities, dayWindowDate]);
+  const dayActivities = useMemo(() => futureActivities.filter((a) => toUiDateKey(a.startsAt) === dayWindowDate), [futureActivities, dayWindowDate]);
   const counts = useMemo(() => {
     const m: Record<string, number> = {};
-    for (const a of futureActivities) m[a.startsAt.slice(0, 10)] = (m[a.startsAt.slice(0, 10)] ?? 0) + 1;
+    for (const a of futureActivities) {
+      const key = toUiDateKey(a.startsAt);
+      m[key] = (m[key] ?? 0) + 1;
+    }
     return m;
   }, [futureActivities]);
   const cells = useMemo(() => makeGrid(month), [month]);
 
+  const triggerFastRefresh = useCallback(() => {
+    void reloadDashboardData();
+    if (refreshTimeoutRef.current) {
+      clearTimeout(refreshTimeoutRef.current);
+    }
+    refreshTimeoutRef.current = setTimeout(() => {
+      void reloadDashboardData();
+    }, 1500);
+  }, [reloadDashboardData]);
+
+  const uploadDocuments = useCallback(async (files: File[], leadId: string) => {
+    const uploaded: LeadDocument[] = [];
+    for (const file of files) {
+      const formData = new FormData();
+      formData.set("file", file);
+      formData.set("leadId", leadId);
+      const response = await fetchWithTimeout("/api/lead-documents", {
+        method: "POST",
+        body: formData,
+      });
+      if (!response.ok) {
+        throw new Error("upload_failed");
+      }
+      uploaded.push((await response.json()) as LeadDocument);
+    }
+    return uploaded;
+  }, []);
+
+  const uploadDraftShowroomContract = useCallback(async (files: File[]) => {
+    if (files.length === 0) return;
+    setUploadingDraftShowroomContract(true);
+    setError("");
+    try {
+      const uploaded = await uploadDocuments(files, "showroom-draft");
+      setDraft((current) => ({ ...current, showroomContract: [...current.showroomContract, ...uploaded] }));
+    } catch {
+      setError("Failed to upload showroom contract.");
+    } finally {
+      setUploadingDraftShowroomContract(false);
+    }
+  }, [uploadDocuments]);
+
+  const uploadLeadShowroomContract = useCallback(async (leadId: string, files: File[]) => {
+    if (files.length === 0) return;
+    setUploadingLeadShowroomContract(true);
+    setError("");
+    try {
+      const uploaded = await uploadDocuments(files, leadId);
+      const lead = leads.find((item) => item.id === leadId);
+      if (!lead) return;
+      const updatedContract = [...lead.showroomContract, ...uploaded];
+      patchLead(leadId, { showroomContract: updatedContract });
+      const response = await fetchWithTimeout(`/api/leads/${leadId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ showroomContract: updatedContract, lastUpdatedBy: username }),
+      });
+      if (!response.ok) {
+        throw new Error("save_failed");
+      }
+      const updatedLead = (await response.json()) as LeadDto;
+      setLeads((current) => current.map((item) => (item.id === updatedLead.id ? updatedLead : item)));
+      setOriginal((current) => ({ ...current, [updatedLead.id]: updatedLead }));
+    } catch {
+      setError("Failed to upload showroom contract.");
+    } finally {
+      setUploadingLeadShowroomContract(false);
+    }
+  }, [leads, uploadDocuments, username]);
+
   async function createLead() {
     if (dashboardReadOnly) return;
-    const showroomVehicleRequest = [draft.brand.trim(), draft.model.trim(), draft.firstRegistrationDate.trim()].filter(Boolean).join(" ");
-    const payloadVehicleRequest = isShowroomRole ? showroomVehicleRequest : draft.vehicleRequest.trim();
+    const showroomVehicleRequest = buildShowroomVehicleRequest(draft);
+    const payloadVehicleRequest = createAsShowroomLead ? showroomVehicleRequest : draft.vehicleRequest.trim();
     if (!draft.fullName.trim() || !draft.phone.trim() || !payloadVehicleRequest) return setError("Full name, phone and vehicle request are required.");
-    if (isShowroomRole && !/^\d{4}$/.test(draft.firstRegistrationDate.trim())) return setError("Showroom year must be exactly 4 digits (YYYY).");
+    if (createAsShowroomLead && !/^\d{4}$/.test(draft.firstRegistrationDate.trim())) return setError("Showroom year must be exactly 4 digits (YYYY).");
     setError("");
     try {
       const r = await fetchWithTimeout("/api/leads", {
@@ -512,8 +739,12 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
           ...draft,
           vehicleRequest: payloadVehicleRequest,
           createdAt: draft.createdAt ? new Date(draft.createdAt).toISOString() : new Date().toISOString(),
-          handoverDepartment: isShowroomRole ? "showroom" : "sales",
+          handoverDepartment: createAsShowroomLead ? "showroom" : "sales",
           lastUpdatedBy: username,
+          addonOther: createAsShowroomLead ? draft.showroomDescription : draft.handoverNote,
+          insuranceGoPrice: createAsShowroomLead ? draft.showroomGoPrice : "",
+          insuranceCascoPrice: createAsShowroomLead ? draft.showroomCascoPrice : "",
+          showroomContract: draft.showroomContract,
         }),
       });
       if (!r.ok) return setError("Failed to create lead.");
@@ -523,46 +754,12 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
       setTransferStage((p) => ({ ...p, [created.id]: created.stage }));
       setLeadWindowId(created.id);
       setAddingLead(false);
-      setDraft({
-        fullName: "",
-        phone: "",
-        email: "",
-        egn: "",
-        address: "",
-        vehicleRequest: "",
-        source: "call",
-        createdAt: toLocal(new Date().toISOString()),
-        contractLink: "",
-        handoverNote: "",
-        car: "",
-        purchaseDate: "",
-        am: "",
-        referral: "",
-        discount: "",
-        clientDiscount: "",
-        budget: "",
-        contractPackage: "",
-        contractPrice: "",
-        brand: "",
-        model: "",
-        engine: "",
-        powerHp: "",
-        vin: "",
-        serviced: "No",
-        servicedDate: "",
-        secondKey: "No",
-        secondTireSet: "No",
-        purchaseLocation: "",
-        vatKey: "",
-        deliveryPrice: "",
-        warranty: "No",
-        firstRegistrationDate: "",
-        mileage: "",
-        serviceOfferDetails: "",
-        inspection: "No",
-        inspectionProtocolLink: "",
-        serviceOfferLink: "",
-      });
+      triggerFastRefresh();
+      setDraft(createEmptyLeadDraft());
+      if (addLeadWindowMode && typeof window !== "undefined" && window.opener) {
+        window.opener.postMessage({ type: "sevencars:add-lead-saved", leadId: created.id }, window.location.origin);
+        window.close();
+      }
     } catch {
       setError("Failed to create lead.");
     }
@@ -570,6 +767,153 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
 
   function patchLead(id: string, patch: Partial<LeadDto>) {
     setLeads((p) => p.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+  }
+
+  async function syncCallbackActivity(lead: LeadDto) {
+    if (!isCallbackStage(lead.stage) || !lead.callbackAt) {
+      if (lead.callbackActivityId) {
+        try {
+          const response = await fetchWithTimeout(`/api/activities/${lead.callbackActivityId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "done" }),
+          });
+          if (response.ok) {
+            const updatedActivity = (await response.json()) as ActivityDto;
+            setActivities((current) => current.map((item) => (item.id === updatedActivity.id ? updatedActivity : item)).sort((a, b) => a.startsAt.localeCompare(b.startsAt)));
+          }
+          const leadResponse = await fetchWithTimeout(`/api/leads/${lead.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ callbackActivityId: "", lastUpdatedBy: username }),
+          });
+          if (leadResponse.ok) {
+            return (await leadResponse.json()) as LeadDto;
+          }
+        } catch {
+          // Keep the lead save successful even if activity sync fails.
+        }
+      }
+      return lead;
+    }
+    const payload = {
+      title: `Callback: ${lead.fullName}`,
+      note: lead.callbackNotes,
+      startsAt: lead.callbackAt,
+      department: lead.handoverDepartment === "account" ? "account" : lead.handoverDepartment === "logistics" ? "logistics" : "sales",
+      ownerUsername: username.toLowerCase(),
+    } as const;
+    try {
+      if (lead.callbackActivityId) {
+        const response = await fetchWithTimeout(`/api/activities/${lead.callbackActivityId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, status: "planned" }),
+        });
+        if (response.ok) {
+          const updatedActivity = (await response.json()) as ActivityDto;
+          setActivities((current) => current.map((item) => (item.id === updatedActivity.id ? updatedActivity : item)).sort((a, b) => a.startsAt.localeCompare(b.startsAt)));
+          return lead;
+        }
+      }
+
+      const response = await fetchWithTimeout("/api/activities", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) return lead;
+      const createdActivity = (await response.json()) as ActivityDto;
+      setActivities((current) => [...current, createdActivity].sort((a, b) => a.startsAt.localeCompare(b.startsAt)));
+
+      const leadResponse = await fetchWithTimeout(`/api/leads/${lead.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ callbackActivityId: createdActivity.id, lastUpdatedBy: username }),
+      });
+      if (!leadResponse.ok) return lead;
+      return (await leadResponse.json()) as LeadDto;
+    } catch {
+      return lead;
+    }
+  }
+
+  async function syncScheduledActivity(lead: LeadDto, options: {
+    startsAt: string;
+    activityId: string;
+    title: string;
+    note: string;
+    department: ActivityDto["department"];
+    activityIdField: "pickupActivityId" | "familyFollowUpActivityId";
+  }) {
+    if (!options.startsAt) {
+      if (options.activityId) {
+        try {
+          const response = await fetchWithTimeout(`/api/activities/${options.activityId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "done" }),
+          });
+          if (response.ok) {
+            const updatedActivity = (await response.json()) as ActivityDto;
+            setActivities((current) => current.map((item) => (item.id === updatedActivity.id ? updatedActivity : item)).sort((a, b) => a.startsAt.localeCompare(b.startsAt)));
+          }
+          const leadResponse = await fetchWithTimeout(`/api/leads/${lead.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ [options.activityIdField]: "", lastUpdatedBy: username }),
+          });
+          if (leadResponse.ok) {
+            return (await leadResponse.json()) as LeadDto;
+          }
+        } catch {
+          // Keep lead save flow successful even if calendar sync fails.
+        }
+      }
+      return lead;
+    }
+
+    const payload = {
+      title: options.title,
+      note: options.note,
+      startsAt: options.startsAt,
+      department: options.department,
+      ownerUsername: username.toLowerCase(),
+    } as const;
+
+    try {
+      if (options.activityId) {
+        const response = await fetchWithTimeout(`/api/activities/${options.activityId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, status: "planned" }),
+        });
+        if (response.ok) {
+          const updatedActivity = (await response.json()) as ActivityDto;
+          setActivities((current) => current.map((item) => (item.id === updatedActivity.id ? updatedActivity : item)).sort((a, b) => a.startsAt.localeCompare(b.startsAt)));
+          return lead;
+        }
+      }
+
+      const response = await fetchWithTimeout("/api/activities", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) return lead;
+      const createdActivity = (await response.json()) as ActivityDto;
+      setActivities((current) => [...current, createdActivity].sort((a, b) => a.startsAt.localeCompare(b.startsAt)));
+
+      const leadResponse = await fetchWithTimeout(`/api/leads/${lead.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [options.activityIdField]: createdActivity.id, lastUpdatedBy: username }),
+      });
+      if (!leadResponse.ok) return lead;
+      return (await leadResponse.json()) as LeadDto;
+    } catch {
+      return lead;
+    }
   }
 
   async function saveLead(id: string) {
@@ -584,7 +928,15 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
         return;
       }
     }
+    if (isCallbackStage(transferStage[id] ?? lead.stage) && !lead.callbackAt) {
+      setError("Callback date and time are required for this status.");
+      return;
+    }
     const payload: LeadDto = { ...lead, stage: transferStage[id] ?? lead.stage, lastUpdatedBy: username };
+    if (payload.aftersalesWarranty !== "Yes") {
+      payload.aftersalesWarrantyDate = "";
+      payload.aftersalesWarrantyMileage = "";
+    }
     const now = new Date().toISOString();
     if (prev) {
       if (payload.serviceOfferLink.trim() && !prev.serviceOfferLink.trim()) {
@@ -633,7 +985,16 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
     try {
       const r = await fetchWithTimeout(`/api/leads/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (r.ok) {
-        const updated = (await r.json()) as LeadDto;
+        let updated = (await r.json()) as LeadDto;
+        updated = await syncCallbackActivity(updated);
+        updated = await syncScheduledActivity(updated, {
+          startsAt: updated.pickupDate ? dateOnlyToIso(updated.pickupDate, 9, 0) : "",
+          activityId: updated.pickupActivityId,
+          title: `PickUp: ${updated.fullName}`,
+          note: `${updated.fullName} | ${updated.phone}${updated.vehicleRequest ? ` | ${updated.vehicleRequest}` : ""}`,
+          department: "account",
+          activityIdField: "pickupActivityId",
+        });
         setLeads((p) => p.map((x) => (x.id === id ? updated : x)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
         setOriginal((p) => ({ ...p, [id]: updated }));
         setTransferStage((p) => ({ ...p, [id]: updated.stage }));
@@ -674,9 +1035,6 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
     if (dashboardReadOnly) return;
     const lead = leads.find((x) => x.id === id);
     if (!lead) return;
-    const canTransfer =
-      department === "logistics" && role === "AccountManager" ? lead.stage === "Contract" : lead.stage === "Contract";
-    if (!canTransfer) return;
     setSaving((p) => ({ ...p, [id]: true }));
     const now = new Date().toISOString();
     try {
@@ -692,7 +1050,15 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
         }),
       });
       if (r.ok) {
-        const updated = (await r.json()) as LeadDto;
+        let updated = (await r.json()) as LeadDto;
+        updated = await syncScheduledActivity(updated, {
+          startsAt: department === "logistics" && (updated.isFamily || !!updated.familyAt) ? addDays(updated.familyAt || now, 14) : "",
+          activityId: updated.familyFollowUpActivityId,
+          title: `Existing Lead Follow-up: ${updated.fullName}`,
+          note: `${updated.fullName} | ${updated.phone}${updated.email ? ` | ${updated.email}` : ""}${updated.vehicleRequest ? ` | ${updated.vehicleRequest}` : ""}`,
+          department: "logistics",
+          activityIdField: "familyFollowUpActivityId",
+        });
         setLeads((p) => p.map((x) => (x.id === id ? updated : x)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
         setOriginal((p) => ({ ...p, [id]: updated }));
         setTransferStage((p) => ({ ...p, [id]: updated.stage }));
@@ -713,18 +1079,23 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
     if (dashboardReadOnly) return;
     const lead = leads.find((x) => x.id === id);
     if (!lead) return;
+    if (!returnComment.trim()) {
+      setError("Return to Sales comment is required.");
+      return;
+    }
     setSaving((p) => ({ ...p, [id]: true }));
     try {
       const r = await fetchWithTimeout(`/api/leads/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...lead, handoverDepartment: "sales", lastUpdatedBy: username }),
+        body: JSON.stringify({ ...lead, handoverDepartment: "sales", returnToSalesComment: returnComment.trim(), lastUpdatedBy: username }),
       });
       if (r.ok) {
         const updated = (await r.json()) as LeadDto;
         setLeads((p) => p.map((x) => (x.id === id ? updated : x)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
         setOriginal((p) => ({ ...p, [id]: updated }));
         setTransferStage((p) => ({ ...p, [id]: updated.stage }));
+        setReturnComment("");
         setLeadWindowId(null);
       } else {
         setError("Failed to return lead to Sales.");
@@ -754,7 +1125,15 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
         }),
       });
       if (r.ok) {
-        const updated = (await r.json()) as LeadDto;
+        let updated = (await r.json()) as LeadDto;
+        updated = await syncScheduledActivity(updated, {
+          startsAt: addDays(updated.familyAt || now, 14),
+          activityId: updated.familyFollowUpActivityId,
+          title: `Existing Lead Follow-up: ${updated.fullName}`,
+          note: `${updated.fullName} | ${updated.phone}${updated.email ? ` | ${updated.email}` : ""}${updated.vehicleRequest ? ` | ${updated.vehicleRequest}` : ""}`,
+          department: "logistics",
+          activityIdField: "familyFollowUpActivityId",
+        });
         setLeads((p) => p.map((x) => (x.id === id ? updated : x)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
         setOriginal((p) => ({ ...p, [id]: updated }));
         setTransferStage((p) => ({ ...p, [id]: updated.stage }));
@@ -814,6 +1193,7 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
           note: activityDraft.note,
           startsAt: startsAt(activityDraft.date, activityDraft.hour, activityDraft.minute),
           department: roleDepartment(role) === "all" ? "sales" : roleDepartment(role),
+          ownerUsername: username.toLowerCase(),
         }),
       });
       if (r.ok) {
@@ -821,6 +1201,7 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
         setActivities((p) => [...p, created].sort((a, b) => a.startsAt.localeCompare(b.startsAt)));
         setActivityDraft({ title: "", note: "", date: next30Dates[0], hour: "09", minute: "00" });
         setShowActivityForm(false);
+        setActivityModalDate(null);
       } else setError("Failed to create activity.");
     } catch {
       setError("Failed to create activity.");
@@ -851,6 +1232,47 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
     }
   }
 
+  async function uploadLeadDocuments(leadId: string, event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length === 0) return;
+
+    setUploadingDocuments((current) => ({ ...current, [leadId]: true }));
+    try {
+      const lead = leads.find((item) => item.id === leadId);
+      if (!lead) return;
+
+      const uploadedDocuments: LeadDocument[] = [];
+      for (const file of files) {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("leadId", leadId);
+
+        const response = await fetchWithTimeout("/api/lead-documents", {
+          method: "POST",
+          body: formData,
+        }, 60000);
+
+        if (!response.ok) {
+          setError("Failed to upload document.");
+          return;
+        }
+        uploadedDocuments.push((await response.json()) as LeadDocument);
+      }
+
+      const updated = await patchLeadRemote(leadId, {
+        accountDocuments: [...(lead.accountDocuments ?? []), ...uploadedDocuments],
+      });
+      if (updated) {
+        setLeadWindowId(updated.id);
+      }
+    } catch {
+      setError("Failed to upload document.");
+    } finally {
+      event.target.value = "";
+      setUploadingDocuments((current) => ({ ...current, [leadId]: false }));
+    }
+  }
+
   async function patchLeadRemote(id: string, patch: Partial<LeadDto>) {
     setMemoSaving(true);
     try {
@@ -862,6 +1284,7 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
       const updated = (await r.json()) as LeadDto;
       setLeads((p) => p.map((x) => (x.id === id ? updated : x)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
       setOriginal((p) => ({ ...p, [id]: updated }));
+      triggerFastRefresh();
       return updated;
     } catch {
       setError("Failed to update memo.");
@@ -891,12 +1314,17 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
 
   async function submitMemoToTeamLead() {
     if (!selectedMemoLead) return;
-    if (!memoContractLink.trim() || !memoDescription.trim()) {
-      setError("Contract link and description are required for New Memo.");
+    if (!memoSubject) {
+      setError("Memo subject is required.");
+      return;
+    }
+    if (!memoDescription.trim()) {
+      setError("Description is required.");
       return;
     }
     const updated = await patchLeadRemote(selectedMemoLead.id, {
-      memoContractLink: memoContractLink.trim(),
+      memoSubject,
+      memoContractLink: "",
       memoDescription: memoDescription.trim(),
       memoStatus: "pending_teamlead",
       memoAccountSubmittedAt: new Date().toISOString(),
@@ -973,12 +1401,42 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
   }
 
   const cards = [
-    { title: "Active Leads", value: visibleByRole.filter((l) => l.stage !== "Contract").length },
-    { title: "New Arrivals", value: visibleByRole.filter((l) => l.stage === "New leed").length },
-    { title: "Active Deals", value: visibleByRole.filter((l) => l.stage !== "New leed").length },
-    { title: "Contact This Month", value: visibleByRole.filter((l) => l.stage !== "New leed").length },
+    { title: "Active Leads", value: visibleByRole.filter((l) => l.stage !== "Message" && l.stage !== "Contract").length },
+    { title: "New Arrivals", value: visibleByRole.filter((l) => l.stage === "New Lead").length },
+    { title: "Active Deals", value: visibleByRole.filter((l) => l.stage !== "New Lead").length },
+    { title: "Contact This Month", value: visibleByRole.filter((l) => l.stage !== "New Lead").length },
     { title: "Vehicles In Account", value: visibleByRole.filter((l) => l.stage === "Potential").length },
   ];
+
+  if (addLeadWindowMode) {
+    const addLeadWindowIsShowroom = addLeadWindowKind === "showroom";
+    return (
+      <section className="mx-auto max-w-5xl">
+        <section className="module-shell">
+          <div className="module-header">
+            <h2 className="module-title">{addLeadWindowIsShowroom ? "Showroom Add Lead" : "Sales Add Lead"}</h2>
+          </div>
+          <div className="module-body">
+            {error ? <p className="rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">{error}</p> : null}
+            <LeadCreateForm
+              draft={draft}
+              setDraft={setDraft}
+              onSave={createLead}
+              isShowroomRole={addLeadWindowIsShowroom}
+              uploadingShowroomContract={uploadingDraftShowroomContract}
+              onShowroomContractUpload={(files) => void uploadDraftShowroomContract(files)}
+              onCancel={() => {
+                setDraft(createEmptyLeadDraft());
+                if (typeof window !== "undefined") {
+                  window.close();
+                }
+              }}
+            />
+          </div>
+        </section>
+      </section>
+    );
+  }
 
   return (
     <section className="space-y-5">
@@ -1004,8 +1462,22 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
                 <button type="button" className="mini-btn" onClick={() => window.open("/?opstats=1", "_blank", "noopener,noreferrer")}>Statistics</button>
               ) : null}
               <button type="button" onClick={() => setShowLeadSearch((v) => !v)} className="mini-btn">Search</button>
+              <button type="button" onClick={() => setPipelineFilters({})} className="mini-btn">Clear Filters</button>
               {(role === "Sales" || role === "Showroom") && !dashboardReadOnly ? (
-                <button type="button" onClick={() => setAddingLead((v) => !v)} className="brand-btn px-3 py-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof window !== "undefined" && !addLeadWindowMode) {
+                      const profile = isShowroomRole ? "Showroom" : "Sales";
+                      const popupName = isShowroomRole ? "showroom-add-lead" : "sales-add-lead";
+                      const popupQuery = isShowroomRole ? `showroomAddLead=1&profile=${profile}` : `addLead=1&profile=${profile}`;
+                      window.open(`/?${popupQuery}`, popupName, "width=1100,height=900");
+                      return;
+                    }
+                    setAddingLead((v) => !v);
+                  }}
+                  className="brand-btn px-3 py-2 text-xs"
+                >
                   {addingLead ? "Close Add Lead" : "Add Lead"}
                 </button>
               ) : null}
@@ -1021,48 +1493,14 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
                 setDraft={setDraft}
                 onSave={createLead}
                 isShowroomRole={isShowroomRole}
+                uploadingShowroomContract={uploadingDraftShowroomContract}
+                onShowroomContractUpload={(files) => void uploadDraftShowroomContract(files)}
                 onCancel={() => {
                   setAddingLead(false);
-                  setDraft({
-                    fullName: "",
-                    phone: "",
-                    email: "",
-                    egn: "",
-                    address: "",
-                    vehicleRequest: "",
-                    source: "call",
-                    createdAt: toLocal(new Date().toISOString()),
-                    contractLink: "",
-                    handoverNote: "",
-                    car: "",
-                    purchaseDate: "",
-                    am: "",
-                    referral: "",
-                    discount: "",
-                    clientDiscount: "",
-                    budget: "",
-                    contractPackage: "",
-                    contractPrice: "",
-                    brand: "",
-                    model: "",
-                    engine: "",
-                    powerHp: "",
-                    vin: "",
-                    serviced: "No",
-                    servicedDate: "",
-                    secondKey: "No",
-                    secondTireSet: "No",
-                    purchaseLocation: "",
-                    vatKey: "",
-                    deliveryPrice: "",
-                    warranty: "No",
-                    firstRegistrationDate: "",
-                    mileage: "",
-                    serviceOfferDetails: "",
-                    inspection: "No",
-                    inspectionProtocolLink: "",
-                    serviceOfferLink: "",
-                  });
+                  setDraft(createEmptyLeadDraft());
+                  if (addLeadWindowMode && typeof window !== "undefined" && window.opener) {
+                    window.close();
+                  }
                 }}
               />
             ) : null}
@@ -1070,21 +1508,78 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
               <table className="brand-table">
                 <thead>
                   {isShowroomRole ? (
-                    <tr><th>Имена</th><th>Телефон</th><th>Марка</th><th>Модел</th><th>Година</th></tr>
+                    <>
+                      <tr><th>Ownership</th><th>Brand</th><th>Model</th><th>Year</th><th>Reserved</th><th>Sold</th><th>Name</th><th>Package</th></tr>
+                    </>
+                  ) : pipelineType === "existing" ? (
+                    <>
+                      <tr>
+                        <th>Name</th>
+                        <th>Phone</th>
+                        <th>Email</th>
+                        <th>
+                          <TableHeaderFilter
+                            label="Status"
+                            value={pipelineFilters.status ?? ""}
+                            options={pipelineStatusFilterOptions}
+                            onChange={(value) => setPipelineFilters((current) => ({ ...current, status: value }))}
+                          />
+                        </th>
+                        <th>Family At</th>
+                        <th>Warranty</th>
+                        <th>Warranty Until</th>
+                      </tr>
+                    </>
                   ) : (
-                    <tr><th>Name</th><th>Phone</th><th>Email</th><th>Status</th><th>Created At</th><th>User</th></tr>
+                    <>
+                      <tr>
+                        <th>Name</th>
+                        <th>Phone</th>
+                        <th>Email</th>
+                        <th>
+                          <TableHeaderFilter
+                            label="Status"
+                            value={pipelineFilters.status ?? ""}
+                            options={pipelineStatusFilterOptions}
+                            onChange={(value) => setPipelineFilters((current) => ({ ...current, status: value }))}
+                          />
+                        </th>
+                        <th>Created At</th>
+                        <th>
+                          <TableHeaderFilter
+                            label="User"
+                            value={pipelineFilters.user ?? ""}
+                            options={pipelineUserFilterOptions}
+                            onChange={(value) => setPipelineFilters((current) => ({ ...current, user: value }))}
+                          />
+                        </th>
+                      </tr>
+                    </>
                   )}
                 </thead>
                 <tbody>
-                  {paginatedLeads.map((l, idx) => (
+                  {paginatedLeads.map((l) => (
                     <tr key={l.id} onClick={() => setLeadWindowId(l.id)} className="cursor-pointer">
                       {isShowroomRole ? (
                         <>
-                          <td>{l.fullName}</td>
-                          <td>{l.phone}</td>
+                          <td>{l.showroomOwnership}</td>
                           <td>{l.brand || "-"}</td>
                           <td>{l.model || "-"}</td>
                           <td>{l.firstRegistrationDate || "-"}</td>
+                          <td>{l.showroomReserved}</td>
+                          <td>{l.showroomSold}</td>
+                          <td>{l.fullName}</td>
+                          <td>{l.showroomPackage || "-"}</td>
+                        </>
+                      ) : pipelineType === "existing" ? (
+                        <>
+                          <td>{l.fullName}</td>
+                          <td>{l.phone}</td>
+                          <td>{l.email || "-"}</td>
+                          <td>{l.stage}</td>
+                          <td>{l.familyAt ? formatUiDateTime(l.familyAt) : "-"}</td>
+                          <td>{l.aftersalesWarranty}</td>
+                          <td>{l.aftersalesWarrantyDate || "-"}</td>
                         </>
                       ) : (
                         <>
@@ -1093,7 +1588,7 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
                           <td>{l.email}</td>
                           <td>{l.stage}</td>
                           <td>{formatUiDateTime(l.createdAt)}</td>
-                          <td>{assignedUserLabel((leadPage - 1) * leadsPerPage + idx)}</td>
+                          <td>{l.lastUpdatedBy || "-"}</td>
                         </>
                       )}
                     </tr>
@@ -1155,20 +1650,20 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
                 ) : null}
                 {showMemoPanel ? (
                   <div className="space-y-3">
+                    <Field label="Search Memo" value={memoSearch} onChange={setMemoSearch} />
+                    <div className="flex flex-wrap gap-2">
+                      <FilterButton active={memoSearchMode === "name"} label="Name" onClick={() => setMemoSearchMode("name")} />
+                      <FilterButton active={memoSearchMode === "egn"} label="EGN" onClick={() => setMemoSearchMode("egn")} />
+                      <FilterButton active={memoSearchMode === "phone"} label="Phone" onClick={() => setMemoSearchMode("phone")} />
+                      <FilterButton active={memoSearchMode === "vin"} label="VIN" onClick={() => setMemoSearchMode("vin")} />
+                    </div>
                     {role === "AccountManager" ? (
                       <>
-                        <Field label="Search Pipeline" value={memoSearch} onChange={setMemoSearch} />
-                        <div className="flex flex-wrap gap-2">
-                          <FilterButton active={memoSearchMode === "name"} label="Name" onClick={() => setMemoSearchMode("name")} />
-                          <FilterButton active={memoSearchMode === "egn"} label="EGN" onClick={() => setMemoSearchMode("egn")} />
-                          <FilterButton active={memoSearchMode === "phone"} label="Phone" onClick={() => setMemoSearchMode("phone")} />
-                          <FilterButton active={memoSearchMode === "vin"} label="VIN" onClick={() => setMemoSearchMode("vin")} />
-                        </div>
                         <label>
                           <span className="field-label">Lead From Pipeline</span>
                           <select value={memoLeadId} onChange={(e) => setMemoLeadId(e.target.value)} className="brand-input">
                             <option value="">Select lead</option>
-                            {filteredMemoLeads.map((lead) => (
+                            {accountPipelineLeads.map((lead) => (
                               <option key={lead.id} value={lead.id}>
                                 {lead.fullName} | {lead.egn || "no EGN"} | {lead.phone} | {lead.vin || "no VIN"}
                               </option>
@@ -1177,13 +1672,14 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
                         </label>
                         {selectedMemoLead ? (
                           <div className="rounded-lg border border-gray-200 bg-white p-3 text-xs text-gray-700">
+                            <p><strong>Subject:</strong> {selectedMemoLead.memoSubject || "-"}</p>
                             <p><strong>Status:</strong> {memoStatusLabel(selectedMemoLead.memoStatus)}</p>
                             {selectedMemoLead.memoTeamLeadComment ? <p><strong>TeamLeadAM:</strong> {selectedMemoLead.memoTeamLeadComment}</p> : null}
                             {selectedMemoLead.memoOperationComment ? <p><strong>OperationManager:</strong> {selectedMemoLead.memoOperationComment}</p> : null}
                           </div>
                         ) : null}
                         {selectedMemoLead ? <MemoEventsTable events={selectedMemoLead.memoEvents} /> : null}
-                        <Field label="Contract Link" value={memoContractLink} onChange={setMemoContractLink} disabled={dashboardReadOnly} />
+                        <SelectField label="Subject" value={memoSubject} options={memoSubjectOptions} onChange={(value) => setMemoSubject(value as MemoSubject)} disabled={dashboardReadOnly} />
                         <TextField label="Description" value={memoDescription} onChange={setMemoDescription} disabled={dashboardReadOnly} />
                         <button type="button" className="brand-btn w-full px-3 py-2 text-sm" onClick={submitMemoToTeamLead} disabled={!selectedMemoLead || memoSaving || dashboardReadOnly}>
                           {memoSaving ? "Submitting..." : "Submit"}
@@ -1267,7 +1763,7 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
             <div className="module-body space-y-3">
               <div className="flex items-center justify-between"><button type="button" className="mini-btn" onClick={() => setMonth((p) => new Date(p.getFullYear(), p.getMonth() - 1, 1))}>Prev</button><p className="text-sm font-semibold">{formatUiMonth(month)}</p><button type="button" className="mini-btn" onClick={() => setMonth((p) => new Date(p.getFullYear(), p.getMonth() + 1, 1))}>Next</button></div>
               <div className="grid grid-cols-7 gap-1 text-center text-xs font-semibold text-gray-600"><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span></div>
-              <div className="grid grid-cols-7 gap-1">{cells.map((c, i) => <button key={`${c.iso ?? "empty"}-${i}`} type="button" className="min-h-14 rounded border border-gray-200 p-1 text-left text-xs" onClick={() => c.iso && setDayWindowDate(c.iso)}>{c.day ? <><p>{c.day}</p>{c.iso && counts[c.iso] ? <p className="mt-1 rounded bg-blue-100 px-1 py-0.5 text-[10px] text-blue-700">{counts[c.iso]} act</p> : null}</> : null}</button>)}</div>
+              <div className="grid grid-cols-7 gap-1">{cells.map((c, i) => <button key={`${c.iso ?? "empty"}-${i}`} type="button" className="min-h-14 rounded border border-gray-200 p-1 text-left text-xs" onClick={() => { if (!c.iso) return; const selectedDate = c.iso; setActivityDraft((s) => ({ ...s, date: selectedDate })); setActivityModalDate(selectedDate); }}>{c.day ? <><p>{c.day}</p>{c.iso && counts[c.iso] ? <p className="mt-1 rounded bg-blue-100 px-1 py-0.5 text-[10px] text-blue-700">{counts[c.iso]} act</p> : null}</> : null}</button>)}</div>
               <button type="button" onClick={() => setShowActivityForm((v) => !v)} className="brand-btn w-full px-3 py-2 text-sm" disabled={dashboardReadOnly}>{showActivityForm ? "Hide Add Activity" : "Add Activity"}</button>
               {showActivityForm ? <ActivityForm draft={activityDraft} setDraft={setActivityDraft} onSave={createActivity} saving={savingActivity} /> : null}
               <div className="space-y-2"><p className="text-sm font-semibold">Upcoming Activities</p>{futureActivities.length === 0 ? <p className="text-sm text-gray-600">No upcoming activities.</p> : null}{futureActivities.map((a) => <article key={a.id} className="rounded-lg border border-gray-200 p-3"><p className="font-semibold">{a.title}</p><p className="text-xs text-gray-600">{formatUiDateTime(a.startsAt)}</p>{a.note ? <p className="mt-1 text-sm text-gray-700">{a.note}</p> : null}<div className="mt-2 flex gap-2"><button type="button" className="mini-btn" onClick={() => markDone(a.id)} disabled={dashboardReadOnly}>Mark Done</button><button type="button" className="mini-btn" onClick={() => removeActivity(a.id)} disabled={dashboardReadOnly}>Delete</button></div></article>)}</div>
@@ -1305,15 +1801,22 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
                       <Field label="Created At" type="datetime-local" value={toLocal(leadWindow.createdAt)} onChange={(v) => patchLead(leadWindow.id, { createdAt: v ? new Date(v).toISOString() : leadWindow.createdAt })} disabled={basicInfoReadOnly} />
                       <Field label="Contract Link" value={leadWindow.contractLink} onChange={(v) => patchLead(leadWindow.id, { contractLink: v })} disabled={basicInfoReadOnly} />
                       <SelectField label="Source" value={leadWindow.source} options={leadSourceOptions} onChange={(v) => patchLead(leadWindow.id, { source: v as LeadSourceInput })} disabled={basicInfoReadOnly} />
-                      <SelectField label="Status" value={effectiveLeadStage ?? leadWindow.stage} options={stageOptionsByRole} onChange={(v) => { patchLead(leadWindow.id, { stage: v as LeadStage }); setTransferStage((p) => ({ ...p, [leadWindow.id]: v as LeadStage })); }} disabled={stageReadOnly} />
-                      {effectiveLeadStage === "Contract" ? (
+                      <SelectField label="Status" value={effectiveLeadStage ?? leadWindow.stage} options={stageOptionsByRole} onChange={(v) => { patchLead(leadWindow.id, { stage: v as LeadStage, ...(isCallbackStage(v as LeadStage) ? {} : { callbackAt: "", callbackNotes: "" }) }); setTransferStage((p) => ({ ...p, [leadWindow.id]: v as LeadStage })); }} disabled={stageReadOnly} />
+                      {isCallbackStage((effectiveLeadStage ?? leadWindow.stage) as LeadStage) ? (
                         <>
-                          <SelectField label="Пакет" value={leadWindow.contractPackage} options={contractPackageOptions} onChange={(v) => patchLead(leadWindow.id, { contractPackage: v as ContractPackage })} disabled={basicInfoReadOnly} />
-                          <Field label="Цена" value={leadWindow.contractPrice} onChange={(v) => patchLead(leadWindow.id, { contractPrice: v })} disabled={basicInfoReadOnly} />
+                          <Field label="Call Back" type="datetime-local" value={leadWindow.callbackAt ? toLocal(leadWindow.callbackAt) : ""} onChange={(v) => patchLead(leadWindow.id, { callbackAt: v ? new Date(v).toISOString() : "" })} disabled={stageReadOnly} />
+                          <TextField label="Notes" value={leadWindow.callbackNotes} onChange={(v) => patchLead(leadWindow.id, { callbackNotes: v })} disabled={stageReadOnly} />
+                        </>
+                      ) : null}
+                      {effectiveLeadStage === "Message" || effectiveLeadStage === "Contract" ? (
+                        <>
+                          <SelectField label="Package" value={leadWindow.contractPackage} options={contractPackageOptions} onChange={(v) => patchLead(leadWindow.id, { contractPackage: v as ContractPackage })} disabled={basicInfoReadOnly} />
+                          <Field label="Price" value={leadWindow.contractPrice} onChange={(v) => patchLead(leadWindow.id, { contractPrice: v })} disabled={basicInfoReadOnly} />
                         </>
                       ) : null}
                       <TextField label="Handover Description" value={leadWindow.handoverNote} onChange={(v) => patchLead(leadWindow.id, { handoverNote: v })} disabled={basicInfoReadOnly} />
                       <Field label="Budget" value={leadWindow.budget} onChange={(v) => patchLead(leadWindow.id, { budget: v })} disabled={basicInfoReadOnly} />
+                      {leadWindow.returnToSalesComment ? <TextField label="Return To Sales Comment" value={leadWindow.returnToSalesComment} onChange={(v) => patchLead(leadWindow.id, { returnToSalesComment: v })} disabled={role !== "Sales" && role !== "Admin"} /> : null}
                     </>
                   )}
                 </div>
@@ -1321,19 +1824,40 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
               {isShowroomRole ? (
                 <CollapsibleSection title="Showroom info" open={amInfoOpen} onToggle={() => setAmInfoOpen((v) => !v)}>
                   <div className="form-grid md:grid-cols-3">
-                    <Field label="Марка" value={leadWindow.brand} onChange={(v) => patchLead(leadWindow.id, { brand: v })} disabled={showroomInfoReadOnly} />
-                    <Field label="Модел" value={leadWindow.model} onChange={(v) => patchLead(leadWindow.id, { model: v })} disabled={showroomInfoReadOnly} />
-                    <Field label="Година" value={leadWindow.firstRegistrationDate} onChange={(v) => patchLead(leadWindow.id, { firstRegistrationDate: normalizeShowroomYear(v) })} disabled={showroomInfoReadOnly} />
-                    <Field label="Пробег" value={leadWindow.mileage} onChange={(v) => patchLead(leadWindow.id, { mileage: v })} disabled={showroomInfoReadOnly} />
-                    <Field label="Кубатура" value={leadWindow.engine} onChange={(v) => patchLead(leadWindow.id, { engine: v })} disabled={showroomInfoReadOnly} />
-                    <Field label="Мощност (hp)" value={leadWindow.powerHp} onChange={(v) => patchLead(leadWindow.id, { powerHp: v })} disabled={showroomInfoReadOnly} />
-                    <Field label="Произход" value={leadWindow.purchaseLocation} onChange={(v) => patchLead(leadWindow.id, { purchaseLocation: v })} disabled={showroomInfoReadOnly} />
-                    <TextField label="Сервизна история" value={leadWindow.serviceOfferDetails} onChange={(v) => patchLead(leadWindow.id, { serviceOfferDetails: v })} disabled={showroomInfoReadOnly} />
-                    <SelectField label="Прегледана в сервиз" value={leadWindow.inspection} options={yesNoOptions} onChange={(v) => patchLead(leadWindow.id, { inspection: v as YesNo })} disabled={showroomInfoReadOnly} />
-                    <Field label="Протокол (линк)" value={leadWindow.inspectionProtocolLink} onChange={(v) => patchLead(leadWindow.id, { inspectionProtocolLink: v })} disabled={showroomInfoReadOnly} />
-                    <Field label="Оферта за обслужване (линк)" value={leadWindow.serviceOfferLink} onChange={(v) => patchLead(leadWindow.id, { serviceOfferLink: v })} disabled={showroomInfoReadOnly} />
-                    <Field label="Cost Price" value={leadWindow.deliveryPrice} onChange={(v) => patchLead(leadWindow.id, { deliveryPrice: v })} disabled={showroomInfoReadOnly} />
+                    <SelectField label="Ownership" value={leadWindow.showroomOwnership} options={["Own", "Client"]} onChange={(v) => patchLead(leadWindow.id, { showroomOwnership: v as ShowroomOwnership })} disabled={showroomInfoReadOnly} />
+                    <SelectField label="Package" value={leadWindow.showroomPackage} options={showroomPackageOptions} onChange={(v) => patchLead(leadWindow.id, { showroomPackage: v as ShowroomPackage })} disabled={showroomInfoReadOnly} />
+                    <Field label="Brand" value={leadWindow.brand} onChange={(v) => patchLead(leadWindow.id, { brand: v })} disabled={showroomInfoReadOnly} />
+                    <Field label="Model" value={leadWindow.model} onChange={(v) => patchLead(leadWindow.id, { model: v })} disabled={showroomInfoReadOnly} />
+                    <Field label="Year" value={leadWindow.firstRegistrationDate} onChange={(v) => patchLead(leadWindow.id, { firstRegistrationDate: normalizeShowroomYear(v) })} disabled={showroomInfoReadOnly} />
+                    <Field label="Engine" value={leadWindow.engine} onChange={(v) => patchLead(leadWindow.id, { engine: v })} disabled={showroomInfoReadOnly} />
+                    <Field label="Mileage" value={leadWindow.mileage} onChange={(v) => patchLead(leadWindow.id, { mileage: v })} disabled={showroomInfoReadOnly} />
+                    <Field label="VIN" value={leadWindow.vin} onChange={(v) => patchLead(leadWindow.id, { vin: v })} disabled={showroomInfoReadOnly} />
+                    <TextField label="Service History" value={leadWindow.serviceOfferDetails} onChange={(v) => patchLead(leadWindow.id, { serviceOfferDetails: v })} disabled={showroomInfoReadOnly} />
+                    <Field label="Origin" value={leadWindow.purchaseLocation} onChange={(v) => patchLead(leadWindow.id, { purchaseLocation: v })} disabled={showroomInfoReadOnly} />
+                    <SelectField label="Warranty" value={leadWindow.warranty} options={yesNoOptions} onChange={(v) => patchLead(leadWindow.id, { warranty: v as YesNo })} disabled={showroomInfoReadOnly} />
+                    <SelectField label="Inspected In Service" value={leadWindow.inspection} options={yesNoOptions} onChange={(v) => patchLead(leadWindow.id, { inspection: v as YesNo })} disabled={showroomInfoReadOnly} />
+                    <Field label="Tires" value={leadWindow.tiresInfo} onChange={(v) => patchLead(leadWindow.id, { tiresInfo: v })} disabled={showroomInfoReadOnly} />
+                    <TextField label="Description" value={showroomLeadDescription(leadWindow)} onChange={(v) => patchLead(leadWindow.id, { addonOther: v })} disabled={showroomInfoReadOnly} />
+                    {leadWindow.showroomOwnership === "Client" ? (
+                      <>
+                        <Field label="GO" value={leadWindow.insuranceGoPrice} onChange={(v) => patchLead(leadWindow.id, { insuranceGoPrice: v })} disabled={showroomInfoReadOnly} />
+                        <Field label="CASCO" value={leadWindow.insuranceCascoPrice} onChange={(v) => patchLead(leadWindow.id, { insuranceCascoPrice: v })} disabled={showroomInfoReadOnly} />
+                      </>
+                    ) : null}
+                    <SelectField label="Reserved" value={leadWindow.showroomReserved} options={yesNoOptions} onChange={(v) => patchLead(leadWindow.id, { showroomReserved: v as YesNo })} disabled={showroomInfoReadOnly} />
+                    <SelectField label="Sold" value={leadWindow.showroomSold} options={yesNoOptions} onChange={(v) => patchLead(leadWindow.id, { showroomSold: v as YesNo })} disabled={showroomInfoReadOnly} />
                   </div>
+                  {leadWindow.showroomOwnership === "Client" ? (
+                    <div className="mt-3">
+                      <DocumentDropzone
+                        title="Contract"
+                        documents={leadWindow.showroomContract}
+                        uploading={uploadingLeadShowroomContract}
+                        onUpload={(files) => void uploadLeadShowroomContract(leadWindow.id, files)}
+                        onRemove={(documentId) => patchLead(leadWindow.id, { showroomContract: leadWindow.showroomContract.filter((doc) => doc.id !== documentId) })}
+                      />
+                    </div>
+                  ) : null}
                 </CollapsibleSection>
               ) : null}
               {canShowAmInfo && !isShowroomRole ? (
@@ -1345,6 +1869,7 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
                     <Field label="Engine" value={leadWindow.engine} onChange={(v) => patchLead(leadWindow.id, { engine: v })} disabled={amInfoReadOnly} />
                     <SelectField label="Keyless Start" value={leadWindow.keylessStart} options={yesNoOptions} onChange={(v) => patchLead(leadWindow.id, { keylessStart: v as YesNo })} disabled={amInfoReadOnly} />
                     <Field label="Purchase Date" type="date" value={leadWindow.purchaseDate} onChange={(v) => patchLead(leadWindow.id, { purchaseDate: v })} disabled={amInfoReadOnly} />
+                    <Field label="PickUp Date" type="date" value={leadWindow.pickupDate} onChange={(v) => patchLead(leadWindow.id, { pickupDate: v })} disabled={amInfoReadOnly} />
                     <Field label="AM" value={leadWindow.am} onChange={(v) => patchLead(leadWindow.id, { am: v })} disabled={amInfoReadOnly} />
                     <Field label="By Recommendation" value={leadWindow.referral} onChange={(v) => patchLead(leadWindow.id, { referral: v })} disabled={amInfoReadOnly} />
                     <Field label="Discount" value={leadWindow.discount} onChange={(v) => patchLead(leadWindow.id, { discount: v })} disabled={amInfoReadOnly} />
@@ -1375,6 +1900,39 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
                     />
                     <Field label="Mileage" value={leadWindow.mileage} onChange={(v) => patchLead(leadWindow.id, { mileage: v })} disabled={amInfoReadOnly} />
                     <TextField label="Others" value={leadWindow.addonOther} onChange={(v) => patchLead(leadWindow.id, { addonOther: v })} disabled={amInfoReadOnly} />
+                  </div>
+                  <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold">Documents</p>
+                      <div className="flex items-center gap-2">
+                        <input
+                          ref={(node) => {
+                            documentInputRefs.current[leadWindow.id] = node;
+                          }}
+                          type="file"
+                          multiple
+                          className="hidden"
+                          onChange={(event) => void uploadLeadDocuments(leadWindow.id, event)}
+                        />
+                        <button
+                          type="button"
+                          className="mini-btn"
+                          onClick={() => documentInputRefs.current[leadWindow.id]?.click()}
+                          disabled={amInfoReadOnly || uploadingDocuments[leadWindow.id]}
+                        >
+                          {uploadingDocuments[leadWindow.id] ? "Uploading..." : "+"}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {leadWindow.accountDocuments.length === 0 ? <p className="text-xs text-gray-600">No uploaded documents.</p> : null}
+                      {leadWindow.accountDocuments.map((document) => (
+                        <a key={document.id} href={document.url} target="_blank" rel="noreferrer" className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm">
+                          <span>{document.name}</span>
+                          <span className="text-xs text-gray-500">{formatUiDateTime(document.uploadedAt)}</span>
+                        </a>
+                      ))}
+                    </div>
                   </div>
                   {canSeeMemoTrace ? (
                     <div className="mt-3 space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm">
@@ -1408,7 +1966,16 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
 
                       <div className="form-grid md:grid-cols-3">
                         <SelectField label="Регистрация КАТ" value={leadWindow.registrationStatus} options={registrationOptions} onChange={(v) => patchLead(leadWindow.id, { registrationStatus: v as RegistrationStatus })} />
+                        <Field label="Издължаване" type="date" value={leadWindow.payoffDate} onChange={(v) => patchLead(leadWindow.id, { payoffDate: v })} />
+                        <SelectField label="Гаранция" value={leadWindow.aftersalesWarranty} options={yesNoOptions} onChange={(v) => patchLead(leadWindow.id, { aftersalesWarranty: v as YesNo })} />
                       </div>
+
+                      {leadWindow.aftersalesWarranty === "Yes" ? (
+                        <div className="form-grid md:grid-cols-2">
+                          <Field label="Гаранция до" type="date" value={leadWindow.aftersalesWarrantyDate} onChange={(v) => patchLead(leadWindow.id, { aftersalesWarrantyDate: v })} />
+                          <Field label="Пробег" value={leadWindow.aftersalesWarrantyMileage} onChange={(v) => patchLead(leadWindow.id, { aftersalesWarrantyMileage: v })} />
+                        </div>
+                      ) : null}
 
                       <div className="form-grid md:grid-cols-3">
                         <SelectField label="Inspection" value={leadWindow.inspection} options={yesNoOptions} onChange={(v) => patchLead(leadWindow.id, { inspection: v as YesNo })} />
@@ -1503,17 +2070,24 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
               <Field label="Created At" type="datetime-local" value={toLocal(leadWindow.createdAt)} onChange={(v) => patchLead(leadWindow.id, { createdAt: v ? new Date(v).toISOString() : leadWindow.createdAt })} />
               <Field label="Contract Link" value={leadWindow.contractLink} onChange={(v) => patchLead(leadWindow.id, { contractLink: v })} />
               <SelectField label="Source" value={leadWindow.source} options={leadSourceOptions} onChange={(v) => patchLead(leadWindow.id, { source: v as LeadSourceInput })} />
-              <SelectField label="Status" value={effectiveLeadStage ?? leadWindow.stage} options={stageOptionsByRole} onChange={(v) => { patchLead(leadWindow.id, { stage: v as LeadStage }); setTransferStage((p) => ({ ...p, [leadWindow.id]: v as LeadStage })); }} />
-              {effectiveLeadStage === "Contract" ? (
+              <SelectField label="Status" value={effectiveLeadStage ?? leadWindow.stage} options={stageOptionsByRole} onChange={(v) => { patchLead(leadWindow.id, { stage: v as LeadStage, ...(isCallbackStage(v as LeadStage) ? {} : { callbackAt: "", callbackNotes: "" }) }); setTransferStage((p) => ({ ...p, [leadWindow.id]: v as LeadStage })); }} />
+              {isCallbackStage((effectiveLeadStage ?? leadWindow.stage) as LeadStage) ? (
                 <>
-                  <SelectField label="Пакет" value={leadWindow.contractPackage} options={contractPackageOptions} onChange={(v) => patchLead(leadWindow.id, { contractPackage: v as ContractPackage })} />
-                  <Field label="Цена" value={leadWindow.contractPrice} onChange={(v) => patchLead(leadWindow.id, { contractPrice: v })} />
+                  <Field label="Call Back" type="datetime-local" value={leadWindow.callbackAt ? toLocal(leadWindow.callbackAt) : ""} onChange={(v) => patchLead(leadWindow.id, { callbackAt: v ? new Date(v).toISOString() : "" })} />
+                  <TextField label="Notes" value={leadWindow.callbackNotes} onChange={(v) => patchLead(leadWindow.id, { callbackNotes: v })} />
+                </>
+              ) : null}
+              {effectiveLeadStage === "Message" || effectiveLeadStage === "Contract" ? (
+                <>
+                  <SelectField label="Package" value={leadWindow.contractPackage} options={contractPackageOptions} onChange={(v) => patchLead(leadWindow.id, { contractPackage: v as ContractPackage })} />
+                  <Field label="Price" value={leadWindow.contractPrice} onChange={(v) => patchLead(leadWindow.id, { contractPrice: v })} />
                 </>
               ) : null}
               <TextField label="Handover Description" value={leadWindow.handoverNote} onChange={(v) => patchLead(leadWindow.id, { handoverNote: v })} />
               {role === "Sales" || role === "Admin" ? (
                 <Field label="Budget" value={leadWindow.budget} onChange={(v) => patchLead(leadWindow.id, { budget: v })} />
               ) : null}
+              {leadWindow.returnToSalesComment ? <TextField label="Return To Sales Comment" value={leadWindow.returnToSalesComment} onChange={(v) => patchLead(leadWindow.id, { returnToSalesComment: v })} disabled={role !== "Sales" && role !== "Admin"} /> : null}
               {canShowAmInfo ? (
                 <>
                   <Field label="Automobile" value={leadWindow.car} onChange={(v) => patchLead(leadWindow.id, { car: v })} />
@@ -1545,22 +2119,28 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
               ) : null}
             </div>
           )}
+          {role === "AccountManager" && canShowLeadHistory ? <TextField label="Return To Sales Comment" value={returnComment} onChange={setReturnComment} /> : null}
+          {canShowLeadHistory ? (
+            <CollapsibleSection title="Lead History" open={historyOpen} onToggle={() => setHistoryOpen((v) => !v)}>
+              <LeadHistoryCard events={leadWindow.history} noteEntries={leadWindow.noteEntries} />
+            </CollapsibleSection>
+          ) : null}
           <div className="mt-3 flex flex-wrap gap-2">
             <button type="button" className="mini-btn" onClick={() => saveLead(leadWindow.id)} disabled={saving[leadWindow.id] || dashboardReadOnly}>{saving[leadWindow.id] ? "Saving..." : "Save"}</button>
             <button type="button" className="mini-btn" onClick={() => { cancelLead(leadWindow.id); setLeadWindowId(null); }}>Close</button>
             {role === "AccountManager" && !dashboardReadOnly ? (
-              <button type="button" className="brand-btn px-3 py-2 text-xs" onClick={() => doTransfer(leadWindow.id, "logistics")} disabled={saving[leadWindow.id] || effectiveLeadStage !== "Contract"}>Transfer To After Sales</button>
+              <button type="button" className="brand-btn px-3 py-2 text-xs" onClick={() => doTransfer(leadWindow.id, "logistics")} disabled={saving[leadWindow.id]}>Transfer To After Sales</button>
             ) : null}
             {(role === "Sales" || role === "Admin") && !dashboardReadOnly ? (
               <>
-                <button type="button" className="brand-btn px-3 py-2 text-xs" onClick={() => doTransfer(leadWindow.id, "account")} disabled={saving[leadWindow.id] || effectiveLeadStage !== "Contract"}>Transfer To Account</button>
-                <button type="button" className="brand-btn px-3 py-2 text-xs" onClick={() => doTransfer(leadWindow.id, "logistics")} disabled={saving[leadWindow.id] || effectiveLeadStage !== "Contract"}>Transfer To After Sales</button>
+                <button type="button" className="brand-btn px-3 py-2 text-xs" onClick={() => doTransfer(leadWindow.id, "account")} disabled={saving[leadWindow.id]}>Transfer To Account</button>
+                <button type="button" className="brand-btn px-3 py-2 text-xs" onClick={() => doTransfer(leadWindow.id, "logistics")} disabled={saving[leadWindow.id]}>Transfer To After Sales</button>
               </>
             ) : null}
             {role === "Logistics" && !dashboardReadOnly ? (
               <button type="button" className="mini-btn" onClick={() => addToFamily(leadWindow.id)} disabled={saving[leadWindow.id]}>Add to Family</button>
             ) : null}
-            {role !== "Sales" && role !== "Showroom" && role !== "TeamLeadAM" && role !== "OperationManager" && role !== "Logistics" && !dashboardReadOnly ? (
+            {role === "AccountManager" && !dashboardReadOnly ? (
               <button type="button" className="mini-btn" onClick={() => returnToSales(leadWindow.id)} disabled={saving[leadWindow.id]}>Return To Sales</button>
             ) : null}
             {role === "Insurance" ? (
@@ -1568,11 +2148,6 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
             ) : null}
             <button type="button" className="mini-btn" onClick={() => removeLead(leadWindow.id)} disabled={saving[leadWindow.id] || role === "Insurance" || dashboardReadOnly}>Delete</button>
           </div>
-          {(effectiveLeadStage !== "Contract") ? (
-            <p className="mt-2 text-xs text-gray-600">
-              Transfer is enabled only when status is &quot;Contract&quot;.
-            </p>
-          ) : null}
         </ModalWindow>
       ) : null}
 
@@ -1592,6 +2167,12 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
               </article>
             ))}
           </div>
+        </ModalWindow>
+      ) : null}
+
+      {activityModalDate ? (
+        <ModalWindow title={`Add Activity: ${activityModalDate}`} onClose={() => setActivityModalDate(null)}>
+          <ActivityForm draft={activityDraft} setDraft={setActivityDraft} onSave={createActivity} saving={savingActivity} />
         </ModalWindow>
       ) : null}
     </section>
@@ -1640,7 +2221,105 @@ function CollapsibleSection({ title, open, onToggle, children }: { title: string
   );
 }
 
-function LeadCreateForm({ draft, setDraft, onSave, onCancel, isShowroomRole = false }: { draft: LeadDraft; setDraft: (fn: (s: LeadDraft) => LeadDraft) => void; onSave: () => void; onCancel: () => void; isShowroomRole?: boolean }) {
+function ShowroomLeadCreateForm({
+  draft,
+  setDraft,
+  onSave,
+  onCancel,
+  uploadingShowroomContract,
+  onShowroomContractUpload,
+}: {
+  draft: LeadDraft;
+  setDraft: (fn: (s: LeadDraft) => LeadDraft) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  uploadingShowroomContract: boolean;
+  onShowroomContractUpload?: (files: File[]) => void;
+}) {
+  const [selectedOwnership, setSelectedOwnership] = useState<ShowroomOwnership | "">("");
+  const clientOwned = isClientOwnedShowroomVehicle(draft.showroomOwnership);
+
+  useEffect(() => {
+    if (!selectedOwnership) return;
+    setDraft((current) => ({ ...current, showroomOwnership: selectedOwnership }));
+  }, [selectedOwnership, setDraft]);
+
+  return (
+    <div className="rounded-lg border border-gray-200 p-3">
+      <p className="mb-2 text-sm font-semibold">Create New Showroom Lead</p>
+      <div className="max-w-sm">
+        <label>
+          <span className="field-label">Ownership</span>
+          <select
+            value={selectedOwnership}
+            onChange={(e) => setSelectedOwnership(e.target.value as ShowroomOwnership | "")}
+            className="brand-input"
+          >
+            <option value="">Select ownership</option>
+            <option value="Own">Own</option>
+            <option value="Client">Client</option>
+          </select>
+        </label>
+      </div>
+      {selectedOwnership ? (
+        <>
+          <div className="mt-4 form-grid md:grid-cols-2">
+            <Field label="Name" value={draft.fullName} onChange={(v) => setDraft((s) => ({ ...s, fullName: v }))} />
+            <Field label="Phone" value={draft.phone} onChange={(v) => setDraft((s) => ({ ...s, phone: v }))} />
+            <SelectField label="Package" value={draft.showroomPackage} options={showroomPackageOptions} onChange={(v) => setDraft((s) => ({ ...s, showroomPackage: v as ShowroomPackage }))} />
+            <Field label="Brand" value={draft.brand} onChange={(v) => setDraft((s) => ({ ...s, brand: v }))} />
+            <Field label="Model" value={draft.model} onChange={(v) => setDraft((s) => ({ ...s, model: v }))} />
+            <Field label="Year" value={draft.firstRegistrationDate} onChange={(v) => setDraft((s) => ({ ...s, firstRegistrationDate: normalizeShowroomYear(v) }))} />
+            <Field label="Engine" value={draft.engine} onChange={(v) => setDraft((s) => ({ ...s, engine: v }))} />
+            <Field label="Mileage" value={draft.mileage} onChange={(v) => setDraft((s) => ({ ...s, mileage: v }))} />
+            <Field label="VIN" value={draft.vin} onChange={(v) => setDraft((s) => ({ ...s, vin: v }))} />
+            <TextField label="Service History" value={draft.serviceOfferDetails} onChange={(v) => setDraft((s) => ({ ...s, serviceOfferDetails: v }))} />
+            <Field label="Origin" value={draft.purchaseLocation} onChange={(v) => setDraft((s) => ({ ...s, purchaseLocation: v }))} />
+            <SelectField label="Warranty" value={draft.warranty} options={yesNoOptions} onChange={(v) => setDraft((s) => ({ ...s, warranty: v as YesNo }))} />
+            <SelectField label="Inspected In Service" value={draft.inspection} options={yesNoOptions} onChange={(v) => setDraft((s) => ({ ...s, inspection: v as YesNo }))} />
+            <Field label="Tires" value={draft.tiresInfo} onChange={(v) => setDraft((s) => ({ ...s, tiresInfo: v }))} />
+            <TextField label="Description" value={draft.showroomDescription} onChange={(v) => setDraft((s) => ({ ...s, showroomDescription: v }))} />
+            {clientOwned ? (
+              <>
+                <Field label="GO" value={draft.showroomGoPrice} onChange={(v) => setDraft((s) => ({ ...s, showroomGoPrice: v }))} />
+                <Field label="CASCO" value={draft.showroomCascoPrice} onChange={(v) => setDraft((s) => ({ ...s, showroomCascoPrice: v }))} />
+              </>
+            ) : null}
+            <SelectField label="Reserved" value={draft.showroomReserved} options={yesNoOptions} onChange={(v) => setDraft((s) => ({ ...s, showroomReserved: v as YesNo }))} />
+            <SelectField label="Sold" value={draft.showroomSold} options={yesNoOptions} onChange={(v) => setDraft((s) => ({ ...s, showroomSold: v as YesNo }))} />
+          </div>
+          {clientOwned ? (
+            <div className="mt-3">
+              <DocumentDropzone
+                title="Contract"
+                documents={draft.showroomContract}
+                uploading={uploadingShowroomContract}
+                onUpload={(files) => onShowroomContractUpload?.(files)}
+                onRemove={(documentId) => setDraft((s) => ({ ...s, showroomContract: s.showroomContract.filter((doc) => doc.id !== documentId) }))}
+              />
+            </div>
+          ) : null}
+        </>
+      ) : null}
+      <div className="mt-3 flex gap-2"><button type="button" onClick={onSave} className="brand-btn px-4 py-2 text-sm" disabled={!selectedOwnership}>Save Lead</button><button type="button" onClick={onCancel} className="mini-btn">Close</button></div>
+    </div>
+  );
+}
+
+function LeadCreateForm({ draft, setDraft, onSave, onCancel, isShowroomRole = false, uploadingShowroomContract = false, onShowroomContractUpload }: { draft: LeadDraft; setDraft: (fn: (s: LeadDraft) => LeadDraft) => void; onSave: () => void; onCancel: () => void; isShowroomRole?: boolean; uploadingShowroomContract?: boolean; onShowroomContractUpload?: (files: File[]) => void }) {
+  if (isShowroomRole) {
+    return (
+      <ShowroomLeadCreateForm
+        draft={draft}
+        setDraft={setDraft}
+        onSave={onSave}
+        onCancel={onCancel}
+        uploadingShowroomContract={uploadingShowroomContract}
+        onShowroomContractUpload={onShowroomContractUpload}
+      />
+    );
+  }
+
   if (isShowroomRole) {
     return (
       <div className="rounded-lg border border-gray-200 p-3">
@@ -1686,6 +2365,58 @@ function LeadCreateForm({ draft, setDraft, onSave, onCancel, isShowroomRole = fa
   );
 }
 
+function DocumentDropzone({
+  title,
+  documents,
+  uploading,
+  onUpload,
+  onRemove,
+}: {
+  title: string;
+  documents: LeadDocument[];
+  uploading: boolean;
+  onUpload: (files: File[]) => void;
+  onRemove?: (documentId: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  function handleFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    onUpload(Array.from(files));
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    handleFiles(event.dataTransfer.files);
+  }
+
+  return (
+    <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4">
+      <div
+        className="rounded-lg border border-gray-200 bg-white p-4 text-center"
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={handleDrop}
+      >
+        <p className="text-sm font-semibold">{title}</p>
+        <p className="mt-1 text-xs text-gray-600">Drag and drop file here or choose from your device.</p>
+        <input ref={inputRef} type="file" className="hidden" onChange={(event) => handleFiles(event.target.files)} />
+        <button type="button" className="mini-btn mt-3" onClick={() => inputRef.current?.click()} disabled={uploading}>
+          {uploading ? "Uploading..." : "Upload document"}
+        </button>
+      </div>
+      <div className="mt-3 space-y-2">
+        {documents.length === 0 ? <p className="text-xs text-gray-600">No uploaded files.</p> : null}
+        {documents.map((document) => (
+          <div key={document.id} className="flex items-center justify-between gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm">
+            <a href={document.url} target="_blank" rel="noreferrer" className="truncate hover:underline">{document.name}</a>
+            {onRemove ? <button type="button" className="mini-btn" onClick={() => onRemove(document.id)}>Remove</button> : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ActivityForm({ draft, setDraft, onSave, saving }: { draft: { title: string; note: string; date: string; hour: string; minute: string }; setDraft: (fn: (s: { title: string; note: string; date: string; hour: string; minute: string }) => { title: string; note: string; date: string; hour: string; minute: string }) => void; onSave: () => void; saving: boolean }) {
   return (
     <div className="rounded-lg border border-gray-200 p-3">
@@ -1703,16 +2434,80 @@ function ActivityForm({ draft, setDraft, onSave, saving }: { draft: { title: str
   );
 }
 
+function LeadHistoryCard({ events, noteEntries }: { events: LeadHistoryEvent[]; noteEntries: LeadNoteEntry[] }) {
+  const historyRows = [...(events ?? [])].map((event) => ({
+    id: `history-${event.id}`,
+    at: event.at,
+    actor: event.actor,
+    kind: "history" as const,
+    title: event.action,
+    message: event.message,
+  }));
+  const noteRows = [...(noteEntries ?? [])].map((entry) => ({
+    id: `note-${entry.id}`,
+    at: entry.at,
+    actor: entry.actor,
+    kind: "note" as const,
+    title: "note",
+    message: entry.note,
+  }));
+  const rows = [...historyRows, ...noteRows].sort((a, b) => b.at.localeCompare(a.at));
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-3">
+      <p className="mb-2 text-sm font-semibold">Lead History</p>
+      {rows.length === 0 ? (
+        <p className="text-xs text-gray-600">No lead history yet.</p>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((row) => (
+            <article key={row.id} className="rounded-lg border border-gray-200 p-2 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-semibold">{row.actor || "System"}</span>
+                <span className="text-xs text-gray-600">{formatUiDateTime(row.at)}</span>
+              </div>
+              <p className="mt-1 text-xs uppercase tracking-wide text-gray-500">{row.title}</p>
+              <p className="mt-1 text-sm text-gray-800">{row.message}</p>
+            </article>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MemoReadOnlyCard({ lead }: { lead: LeadDto }) {
+  const rows = [
+    ["Name", lead.fullName],
+    ["EGN", lead.egn || "-"],
+    ["Phone", lead.phone],
+    ["Email", lead.email || "-"],
+    ["Address", lead.address || "-"],
+    ["Vehicle Request", lead.vehicleRequest || "-"],
+    ["Automobile", lead.car || "-"],
+    ["Brand", lead.brand || "-"],
+    ["Model", lead.model || "-"],
+    ["Engine", lead.engine || "-"],
+    ["VIN", lead.vin || "-"],
+    ["Purchase Date", lead.purchaseDate || "-"],
+    ["PickUp Date", lead.pickupDate || "-"],
+    ["AM", lead.am || "-"],
+    ["Referral", lead.referral || "-"],
+    ["Discount", lead.discount || "-"],
+    ["Client Discount", lead.clientDiscount || "-"],
+    ["Subject", lead.memoSubject || "-"],
+    ["Description", lead.memoDescription || "-"],
+    ["Status", memoStatusLabel(lead.memoStatus)],
+  ];
+
   return (
     <article className="rounded-lg border border-gray-200 bg-white p-3 text-sm">
-      <p><strong>Name:</strong> {lead.fullName}</p>
-      <p><strong>EGN:</strong> {lead.egn || "-"}</p>
-      <p><strong>Phone:</strong> {lead.phone}</p>
-      <p><strong>VIN:</strong> {lead.vin || "-"}</p>
-      <p><strong>Contract:</strong> {lead.memoContractLink || "-"}</p>
-      <p><strong>Description:</strong> {lead.memoDescription || "-"}</p>
-      <p><strong>Status:</strong> {memoStatusLabel(lead.memoStatus)}</p>
+      <div className="grid gap-2 md:grid-cols-2">
+        {rows.map(([label, value]) => (
+          <p key={label}>
+            <strong>{label}:</strong> {value}
+          </p>
+        ))}
+      </div>
       {lead.memoTeamLeadComment ? <p><strong>TeamLeadAM comment:</strong> {lead.memoTeamLeadComment}</p> : null}
       {lead.memoOperationComment ? <p><strong>OperationManager comment:</strong> {lead.memoOperationComment}</p> : null}
     </article>
@@ -1773,6 +2568,21 @@ function SummaryCard({ title, value }: { title: string; value: number }) {
 function FilterButton({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
   return <button type="button" onClick={onClick} className={`mini-btn ${active ? "border-[#b98e10] bg-[#fff7d8] text-[#8a6a08]" : ""}`}>{label}</button>;
 }
+function TableHeaderFilter({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (v: string) => void }) {
+  return (
+    <div className="flex items-center justify-between gap-1.5 text-[10px] leading-tight">
+      <span className="shrink-0">{label}</span>
+      <select value={value} onChange={(e) => onChange(e.target.value)} className="brand-input h-6 min-w-0 w-[82px] px-1.5 py-0 text-[10px] leading-none">
+        <option value="">All</option>
+        {options.filter((option) => option !== "").map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
 function Field({ label, value, onChange, type = "text", disabled = false }: { label: string; value: string; onChange: (v: string) => void; type?: HTMLInputTypeAttribute; disabled?: boolean }) {
   return <label className={disabled ? "opacity-70" : ""}><span className="field-label">{label}</span><input type={type} value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} className="brand-input" /></label>;
 }
@@ -1782,3 +2592,4 @@ function TextField({ label, value, onChange, disabled = false }: { label: string
 function SelectField({ label, value, options, onChange, disabled = false }: { label: string; value: string; options: string[]; onChange: (v: string) => void; disabled?: boolean }) {
   return <label className={disabled ? "opacity-70" : ""}><span className="field-label">{label}</span><select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} className="brand-input">{options.map((o) => <option key={o} value={o}>{o}</option>)}</select></label>;
 }
+
