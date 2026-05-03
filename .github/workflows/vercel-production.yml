@@ -9,6 +9,7 @@ on:
 env:
   VERCEL_ORG_ID: team_7OmvpPDym3cvM7mJ5ma0R4ZE
   VERCEL_PROJECT_ID: prj_LRJ5wqzg1r6VmIcOw858g8VvvAcO
+  DATABASE_URL: file:./dev.db
 
 jobs:
   deploy:
