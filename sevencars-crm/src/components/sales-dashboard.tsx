@@ -2237,7 +2237,7 @@ function ShowroomLeadCreateForm({
   onShowroomContractUpload?: (files: File[]) => void;
 }) {
   const [selectedOwnership, setSelectedOwnership] = useState<ShowroomOwnership | "">("");
-  const clientOwned = isClientOwnedShowroomVehicle(draft.showroomOwnership);
+  const clientOwned = selectedOwnership !== "" && isClientOwnedShowroomVehicle(selectedOwnership);
 
   useEffect(() => {
     if (!selectedOwnership) return;
