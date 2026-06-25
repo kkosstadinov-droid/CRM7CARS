@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { hasBlobStore, readJsonBlob, updateJsonBlob } from "@/lib/blob-json-store";
+import { assertPersistentStore } from "@/lib/persistence";
 
 export type AppRole = "Admin" | "Boss" | "Sales" | "AccountManager" | "TeamLeadAM" | "OperationManager" | "Logistics" | "Service" | "Insurance" | "Showroom";
 export type DashboardPreset = "pipeline" | "stats";
@@ -111,6 +112,7 @@ function defaultUsers(): AppUser[] {
 }
 
 async function ensureUsersStore() {
+  assertPersistentStore();
   if (hasBlobStore()) {
     const current = await readJsonBlob<AppUser[]>(usersBlobPath, defaultUsers);
     const parsed = Array.isArray(current.value) ? current.value : [];

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentSession } from "@/lib/session";
+import { assertPersistentStore, persistentStoreErrorResponse } from "@/lib/persistence";
 import { deleteActivity, updateActivity } from "@/lib/activities-store";
 import type { ActivityDto } from "@/lib/activities";
 
@@ -15,6 +16,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const session = await getCurrentSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
+    assertPersistentStore();
     const { id } = await params;
     const body = (await request.json()) as UpdateActivityBody;
 
@@ -33,6 +35,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
     return NextResponse.json(updated);
   } catch (error) {
+    const persistenceResponse = persistentStoreErrorResponse(error);
+    if (persistenceResponse) return persistenceResponse;
     const message = error instanceof Error && error.message ? error.message : "Failed to update activity.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -42,6 +46,7 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
   const session = await getCurrentSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
+    assertPersistentStore();
     const { id } = await params;
     const deleted = await deleteActivity(id);
     if (!deleted) {
@@ -49,6 +54,8 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
     }
     return NextResponse.json({ ok: true });
   } catch (error) {
+    const persistenceResponse = persistentStoreErrorResponse(error);
+    if (persistenceResponse) return persistenceResponse;
     const message = error instanceof Error && error.message ? error.message : "Failed to delete activity.";
     return NextResponse.json({ error: message }, { status: 500 });
   }

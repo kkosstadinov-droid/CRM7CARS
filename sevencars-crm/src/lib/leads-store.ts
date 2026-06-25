@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { del, get, list, put } from "@vercel/blob";
 import { hasBlobStore } from "@/lib/blob-json-store";
+import { assertPersistentStore } from "@/lib/persistence";
 import { prisma } from "@/lib/prisma";
 import type { ContractPackage, LeadDocument, LeadDto, LeadHistoryEvent, LeadNoteEntry, LeadSourceInput, MemoStatus, MemoSubject, RegistrationStatus, ShowroomOwnership, ShowroomPackage, YesNo } from "@/lib/leads";
 
@@ -394,6 +395,7 @@ async function seedLeadsIfNeeded() {
 }
 
 async function ensureReady() {
+  assertPersistentStore();
   if (!bootstrapPromise) {
     bootstrapPromise = hasBlobStore() ? seedBlobLeadsIfNeeded() : seedLeadsIfNeeded();
   }
