@@ -1,16 +1,17 @@
 import { cookies } from "next/headers";
 import { createUser, listUsers, parseSessionCookieValue, type AppRole, type DashboardPreset } from "@/lib/auth";
 import { NextResponse } from "next/server";
+import { canCreateUsers } from "@/lib/permissions.mjs";
 
-async function assertAdmin() {
+async function assertUserManager() {
   const sessionRaw = (await cookies()).get("sevencars_session")?.value;
   const session = parseSessionCookieValue(sessionRaw);
-  return session?.role === "Admin" ? session : null;
+  return canCreateUsers(session) ? session : null;
 }
 
 export async function GET() {
-  const admin = await assertAdmin();
-  if (!admin) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const manager = await assertUserManager();
+  if (!manager) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const users = await listUsers();
   return NextResponse.json(
     users.map((user) => ({
@@ -25,8 +26,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const admin = await assertAdmin();
-  if (!admin) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const manager = await assertUserManager();
+  if (!manager) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const body = (await request.json()) as { username?: string; password?: string; role?: AppRole; dashboardPreset?: DashboardPreset };
   const username = body.username?.trim() ?? "";
   const password = body.password?.trim() ?? "";

@@ -1,16 +1,17 @@
 import { cookies } from "next/headers";
 import { deleteUser, listUsers, parseSessionCookieValue, resetUserPassword, type AppRole, type DashboardPreset, updateUser } from "@/lib/auth";
 import { NextResponse } from "next/server";
+import { canCreateUsers } from "@/lib/permissions.mjs";
 
-async function assertAdmin() {
+async function assertUserManager() {
   const sessionRaw = (await cookies()).get("sevencars_session")?.value;
   const session = parseSessionCookieValue(sessionRaw);
-  return session?.role === "Admin" ? session : null;
+  return canCreateUsers(session) ? session : null;
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ username: string }> }) {
-  const admin = await assertAdmin();
-  if (!admin) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const manager = await assertUserManager();
+  if (!manager) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const { username } = await params;
   const body = (await request.json()) as { role?: AppRole; dashboardPreset?: DashboardPreset; mustChangePassword?: boolean };
   const updated = await updateUser(username, {
@@ -30,22 +31,22 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ us
 }
 
 export async function DELETE(_: Request, { params }: { params: Promise<{ username: string }> }) {
-  const admin = await assertAdmin();
-  if (!admin) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const manager = await assertUserManager();
+  if (!manager) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const { username } = await params;
   const users = await listUsers();
   const target = users.find((u) => u.username === username.trim().toLowerCase());
   if (!target) return NextResponse.json({ error: "User not found." }, { status: 404 });
-  if (target.username === admin.username) {
-    return NextResponse.json({ error: "Admin cannot delete own account." }, { status: 400 });
+  if (target.username === manager.username) {
+    return NextResponse.json({ error: "User manager cannot delete own account." }, { status: 400 });
   }
   await deleteUser(target.username);
   return NextResponse.json({ ok: true });
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ username: string }> }) {
-  const admin = await assertAdmin();
-  if (!admin) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const manager = await assertUserManager();
+  if (!manager) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const { username } = await params;
   const body = (await request.json()) as { action?: string; newPassword?: string };
   if (body.action !== "reset_password") {

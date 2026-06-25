@@ -44,14 +44,19 @@ async function waitForActivity(activityId, cookie, attempts = 16) {
 async function main() {
   console.log(`Smoke test against ${baseUrl}`);
 
-  const login = await request("/api/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: "sales", password: "sales" }),
-  });
-  assert(login.response.ok, `Login failed: ${login.response.status}`);
-  const cookie = parseSetCookie(login.response.headers.get("set-cookie"));
-  assert(cookie.includes("sevencars_session="), "Missing session cookie from login");
+  async function loginAs(username, password = username) {
+    const login = await request("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    assert(login.response.ok, `Login failed for ${username}: ${login.response.status}`);
+    const sessionCookie = parseSetCookie(login.response.headers.get("set-cookie"));
+    assert(sessionCookie.includes("sevencars_session="), `Missing session cookie from ${username} login`);
+    return sessionCookie;
+  }
+
+  const cookie = await loginAs("sales");
 
   const me = await request("/api/auth/me", {
     headers: { Cookie: cookie },
@@ -97,6 +102,10 @@ async function main() {
     form.set("file", new Blob(["smoke-contract"], { type: "text/plain" }), "contract.txt");
     const upload = await fetch(`${baseUrl}/api/lead-documents`, { method: "POST", body: form, headers: { Cookie: cookie } });
     const json = await upload.json();
+    if (upload.status === 403) {
+      console.log("Sales document upload correctly forbidden; continuing without upload assertion.");
+      return null;
+    }
     if (upload.status === 503) {
       console.log("Document upload unavailable in this environment; continuing without upload assertion.");
       return null;
@@ -148,20 +157,32 @@ async function main() {
     assert(createdShowroomLead.showroomContract?.length === 1, "Showroom contract was not saved");
   }
 
+  const salesStatusUpdate = await request(`/api/leads/${leadId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ stage: "Contract" }),
+  }, cookie);
+  assert(salesStatusUpdate.response.status === 403, `Sales status update should be forbidden: ${salesStatusUpdate.response.status}`);
+
+  const salesDelete = await request(`/api/leads/${leadId}`, { method: "DELETE" }, cookie);
+  assert(salesDelete.response.status === 403, `Sales delete should be forbidden: ${salesDelete.response.status}`);
+
+  const operationCookie = await loginAs("operationmanager");
   const updatedLead = await request(`/api/leads/${leadId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      stage: "Contract",
       showroomSold: "Yes",
       showroomReserved: "No",
-      lastUpdatedBy: "sales",
     }),
-  }, cookie);
-  assert(updatedLead.response.ok, `Update showroom lead failed: ${updatedLead.response.status}`);
+  }, operationCookie);
+  assert(updatedLead.response.ok, `OperationManager update showroom lead failed: ${updatedLead.response.status}`);
+  assert(updatedLead.json?.stage === "Contract", "OperationManager status update did not save");
   assert(updatedLead.json?.showroomSold === "Yes", "Showroom sold flag did not update");
 
-  const deletedLead = await request(`/api/leads/${leadId}`, { method: "DELETE" }, cookie);
-  assert(deletedLead.response.ok, `Delete showroom lead failed: ${deletedLead.response.status}`);
+  const deletedLead = await request(`/api/leads/${leadId}`, { method: "DELETE" }, operationCookie);
+  assert(deletedLead.response.ok, `OperationManager delete showroom lead failed: ${deletedLead.response.status}`);
 
   await sleep(250);
   const deletedActivity = await request(`/api/activities/${activityId}`, { method: "DELETE" }, cookie);

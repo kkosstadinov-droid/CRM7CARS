@@ -9,6 +9,7 @@ import { ChangePasswordForm } from "@/components/change-password-form";
 import { CrmWorkspace } from "@/components/crm-workspace";
 import { LogoutButton } from "@/components/logout-button";
 import { SalesDashboard } from "@/components/sales-dashboard";
+import { canSeeDashboard } from "@/lib/permissions.mjs";
 
 const profileOptions: AppRole[] = ["Boss", "Sales", "Showroom", "AccountManager", "TeamLeadAM", "OperationManager", "Logistics", "Service", "Insurance"];
 const showroomAccessRoles: AppRole[] = ["Sales", "AccountManager", "TeamLeadAM", "Logistics", "Service", "Insurance"];
@@ -54,8 +55,9 @@ export function DashboardShell({
     return [activeRole];
   }, [activeRole, canShowroomSwitch]);
 
-  const useStatsByPreset = activeDashboardPreset === "stats";
-  const renderStats = effectiveRole === "Boss" || (!canProfileSwitch && useStatsByPreset) || (activeRole === "OperationManager" && opStatsPopupMode);
+  const canUseManagementDashboard = canSeeDashboard({ username: activeUsername, role: activeRole });
+  const useStatsByPreset = canUseManagementDashboard && activeDashboardPreset === "stats";
+  const renderStats = canUseManagementDashboard && (effectiveRole === "Boss" || (!canProfileSwitch && useStatsByPreset) || (activeRole === "OperationManager" && opStatsPopupMode));
 
   if (standaloneShowroomAddLead && (effectiveRole === "Showroom" || effectiveRole === "Sales")) {
     return (

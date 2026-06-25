@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import type { ActivityDto } from "@/lib/activities";
 import type { AppRole } from "@/lib/auth";
 import { callbackStages, type ContractPackage, type LeadDocument, type LeadDto, type LeadHistoryEvent, type LeadNoteEntry, type LeadSourceInput, type LeadStage, type MemoEvent, type MemoStatus, type MemoSubject, type RegistrationStatus, type ShowroomOwnership, type ShowroomPackage, type YesNo } from "@/lib/leads";
+import { canChangeLeadStatus, canDeleteLead, canSeeDocuments } from "@/lib/permissions.mjs";
 
 type SearchMode = "all" | "name" | "email" | "phone";
 type MemoSearchMode = "name" | "egn" | "phone" | "vin";
@@ -525,7 +526,11 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
   const canShowLeadHistory = role !== "Sales" && role !== "AccountManager";
   const basicInfoReadOnly = false;
   const amInfoReadOnly = false;
-  const stageReadOnly = readOnlyView || (role !== "Sales" && role !== "AccountManager" && role !== "Admin");
+  const sessionLike = useMemo(() => ({ username, role }), [role, username]);
+  const canChangeStatus = canChangeLeadStatus(sessionLike);
+  const canRemoveLead = canDeleteLead(sessionLike);
+  const canUseDocuments = canSeeDocuments(sessionLike);
+  const stageReadOnly = readOnlyView || !canChangeStatus;
   const showroomInfoReadOnly = false;
   const canSeeMemoTrace = role === "AccountManager" || role === "TeamLeadAM" || role === "OperationManager" || role === "Boss" || role === "Admin";
   const canEditAddOnField = (field: "serviceOffer" | "serviceOfferLink" | "inspectionProtocolLink" | "other") => {
@@ -1799,7 +1804,7 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
                       <Field label="Address" value={leadWindow.address} onChange={(v) => patchLead(leadWindow.id, { address: v })} disabled={basicInfoReadOnly} />
                       <Field label="Vehicle Request" value={leadWindow.vehicleRequest} onChange={(v) => patchLead(leadWindow.id, { vehicleRequest: v })} disabled={basicInfoReadOnly} />
                       <Field label="Created At" type="datetime-local" value={toLocal(leadWindow.createdAt)} onChange={(v) => patchLead(leadWindow.id, { createdAt: v ? new Date(v).toISOString() : leadWindow.createdAt })} disabled={basicInfoReadOnly} />
-                      <Field label="Contract Link" value={leadWindow.contractLink} onChange={(v) => patchLead(leadWindow.id, { contractLink: v })} disabled={basicInfoReadOnly} />
+                      <Field label="Contract Link" value={leadWindow.contractLink} onChange={(v) => patchLead(leadWindow.id, { contractLink: v })} disabled={basicInfoReadOnly || !canUseDocuments} />
                       <SelectField label="Source" value={leadWindow.source} options={leadSourceOptions} onChange={(v) => patchLead(leadWindow.id, { source: v as LeadSourceInput })} disabled={basicInfoReadOnly} />
                       <SelectField label="Status" value={effectiveLeadStage ?? leadWindow.stage} options={stageOptionsByRole} onChange={(v) => { patchLead(leadWindow.id, { stage: v as LeadStage, ...(isCallbackStage(v as LeadStage) ? {} : { callbackAt: "", callbackNotes: "" }) }); setTransferStage((p) => ({ ...p, [leadWindow.id]: v as LeadStage })); }} disabled={stageReadOnly} />
                       {isCallbackStage((effectiveLeadStage ?? leadWindow.stage) as LeadStage) ? (
@@ -1816,7 +1821,7 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
                       ) : null}
                       <TextField label="Handover Description" value={leadWindow.handoverNote} onChange={(v) => patchLead(leadWindow.id, { handoverNote: v })} disabled={basicInfoReadOnly} />
                       <Field label="Budget" value={leadWindow.budget} onChange={(v) => patchLead(leadWindow.id, { budget: v })} disabled={basicInfoReadOnly} />
-                      {leadWindow.returnToSalesComment ? <TextField label="Return To Sales Comment" value={leadWindow.returnToSalesComment} onChange={(v) => patchLead(leadWindow.id, { returnToSalesComment: v })} disabled={role !== "Sales" && role !== "Admin"} /> : null}
+                      {leadWindow.returnToSalesComment ? <TextField label="Return To Sales Comment" value={leadWindow.returnToSalesComment} onChange={(v) => patchLead(leadWindow.id, { returnToSalesComment: v })} disabled={stageReadOnly} /> : null}
                     </>
                   )}
                 </div>
@@ -1847,7 +1852,7 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
                     <SelectField label="Reserved" value={leadWindow.showroomReserved} options={yesNoOptions} onChange={(v) => patchLead(leadWindow.id, { showroomReserved: v as YesNo })} disabled={showroomInfoReadOnly} />
                     <SelectField label="Sold" value={leadWindow.showroomSold} options={yesNoOptions} onChange={(v) => patchLead(leadWindow.id, { showroomSold: v as YesNo })} disabled={showroomInfoReadOnly} />
                   </div>
-                  {leadWindow.showroomOwnership === "Client" ? (
+                  {leadWindow.showroomOwnership === "Client" && canUseDocuments ? (
                     <div className="mt-3">
                       <DocumentDropzone
                         title="Contract"
@@ -1901,7 +1906,7 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
                     <Field label="Mileage" value={leadWindow.mileage} onChange={(v) => patchLead(leadWindow.id, { mileage: v })} disabled={amInfoReadOnly} />
                     <TextField label="Others" value={leadWindow.addonOther} onChange={(v) => patchLead(leadWindow.id, { addonOther: v })} disabled={amInfoReadOnly} />
                   </div>
-                  <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                  {canUseDocuments ? <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-sm font-semibold">Documents</p>
                       <div className="flex items-center gap-2">
@@ -1933,7 +1938,7 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
                         </a>
                       ))}
                     </div>
-                  </div>
+                  </div> : null}
                   {canSeeMemoTrace ? (
                     <div className="mt-3 space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm">
                       <p className="font-semibold">Memo Trace</p>
@@ -2146,7 +2151,7 @@ export function SalesDashboard({ role = "Sales", readOnlyView = false, username 
             {role === "Insurance" ? (
               <button type="button" className="mini-btn" onClick={() => exportBasicAmPdf(leadWindow)}>Export</button>
             ) : null}
-            <button type="button" className="mini-btn" onClick={() => removeLead(leadWindow.id)} disabled={saving[leadWindow.id] || role === "Insurance" || dashboardReadOnly}>Delete</button>
+            <button type="button" className="mini-btn" onClick={() => removeLead(leadWindow.id)} disabled={saving[leadWindow.id] || !canRemoveLead || dashboardReadOnly}>Delete</button>
           </div>
         </ModalWindow>
       ) : null}
