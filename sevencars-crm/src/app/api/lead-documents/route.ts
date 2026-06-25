@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getCurrentSession } from "@/lib/session";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { put } from "@vercel/blob";
@@ -26,6 +27,8 @@ async function storeFileLocally(file: File, leadId: string) {
 }
 
 export async function POST(request: Request) {
+  const session = await getCurrentSession();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const formData = await request.formData();
   const file = formData.get("file");
   const leadId = String(formData.get("leadId") ?? "").trim();
@@ -64,3 +67,4 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+

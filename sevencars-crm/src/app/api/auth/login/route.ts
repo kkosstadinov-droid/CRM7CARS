@@ -21,10 +21,11 @@ export async function POST(request: Request) {
   response.cookies.set("sevencars_session", createSessionCookieValue({ username: session.username, role: session.role }), {
     httpOnly: true,
     sameSite: "lax",
-    secure: false,
+    secure: process.env.NODE_ENV === "production",
     maxAge: 60 * 60 * 8,
     path: "/",
   });
 
   return response;
 }
+

@@ -1,3 +1,5 @@
+import { randomBytes, scrypt as scryptCallback, timingSafeEqual, createHmac } from "node:crypto";
+import { promisify } from "node:util";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { hasBlobStore, readJsonBlob, updateJsonBlob } from "@/lib/blob-json-store";
@@ -23,6 +25,51 @@ export type SessionInfo = {
 const dataDir = process.env.VERCEL ? path.join("/tmp", "sevencars-crm-data") : path.join(process.cwd(), "data");
 const usersPath = path.join(dataDir, "users.json");
 const usersBlobPath = process.env.USERS_BLOB_PATH?.trim() || "crm/users.json";
+
+const scrypt = promisify(scryptCallback);
+const passwordHashPrefix = "scrypt";
+
+function getSessionSecret() {
+  const secret = process.env.SEVENCARS_SESSION_SECRET || process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
+  if (secret?.trim()) return secret;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("Missing SEVENCARS_SESSION_SECRET/AUTH_SECRET for signed CRM sessions.");
+  }
+  return "dev-only-sevencars-session-secret-change-before-production";
+}
+
+function base64UrlEncode(value: Buffer | string) {
+  return Buffer.from(value).toString("base64url");
+}
+
+function base64UrlDecode(value: string) {
+  return Buffer.from(value, "base64url").toString("utf8");
+}
+
+function signSessionPayload(payload: string) {
+  return createHmac("sha256", getSessionSecret()).update(payload).digest("base64url");
+}
+
+function isPasswordHash(value: string) {
+  return value.startsWith(`${passwordHashPrefix}$`);
+}
+
+async function hashPassword(password: string) {
+  const salt = randomBytes(16).toString("base64url");
+  const derived = (await scrypt(password.trim(), salt, 64)) as Buffer;
+  return `${passwordHashPrefix}$${salt}$${derived.toString("base64url")}`;
+}
+
+async function verifyPassword(storedPassword: string, inputPassword: string) {
+  const input = inputPassword.trim();
+  if (!isPasswordHash(storedPassword)) return storedPassword === input;
+
+  const [, salt, hash] = storedPassword.split("$");
+  if (!salt || !hash) return false;
+  const expected = Buffer.from(hash, "base64url");
+  const actual = (await scrypt(input, salt, expected.length)) as Buffer;
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
 
 export const defaultRoleCredentials: Record<string, AppRole> = {
   admin: "Admin",
@@ -141,7 +188,7 @@ export async function createUser(input: { username: string; password: string; ro
   const now = new Date().toISOString();
   const created: AppUser = {
     username,
-    password: input.password.trim(),
+    password: await hashPassword(input.password),
     role: input.role,
     dashboardPreset: input.dashboardPreset ?? defaultPresetByRole(input.role),
     createdAt: now,
@@ -181,7 +228,7 @@ export async function resetUserPassword(username: string, nextPassword: string) 
   if (idx === -1) return null;
   users[idx] = {
     ...users[idx],
-    password: nextPassword.trim(),
+    password: await hashPassword(nextPassword),
     mustChangePassword: true,
     updatedAt: new Date().toISOString(),
   };
@@ -203,10 +250,10 @@ export async function changeOwnPassword(username: string, currentPassword: strin
   const normalized = normalizeUsername(username);
   const idx = users.findIndex((user) => user.username === normalized);
   if (idx === -1) return { ok: false as const, reason: "not_found" as const };
-  if (users[idx].password !== currentPassword.trim()) return { ok: false as const, reason: "invalid_current_password" as const };
+  if (!(await verifyPassword(users[idx].password, currentPassword))) return { ok: false as const, reason: "invalid_current_password" as const };
   users[idx] = {
     ...users[idx],
-    password: nextPassword.trim(),
+    password: await hashPassword(nextPassword),
     mustChangePassword: false,
     updatedAt: new Date().toISOString(),
   };
@@ -217,26 +264,45 @@ export async function changeOwnPassword(username: string, currentPassword: strin
 export async function validateCredentials(username: string, password: string): Promise<(SessionInfo & { mustChangePassword: boolean; dashboardPreset: DashboardPreset }) | null> {
   const user = await getUser(username);
   if (!user) return null;
-  if (user.password !== password.trim()) return null;
+  if (!(await verifyPassword(user.password, password))) return null;
+  if (!isPasswordHash(user.password)) {
+    await resetUserPassword(user.username, password);
+    await updateUser(user.username, { mustChangePassword: user.mustChangePassword });
+  }
   return { username: user.username, role: user.role, mustChangePassword: user.mustChangePassword, dashboardPreset: user.dashboardPreset };
 }
 
 export function createSessionCookieValue(session: SessionInfo) {
-  return `${normalizeUsername(session.username)}::${session.role}`;
+  const payload = base64UrlEncode(
+    JSON.stringify({
+      username: normalizeUsername(session.username),
+      role: session.role,
+      issuedAt: Date.now(),
+    }),
+  );
+  const signature = signSessionPayload(payload);
+  return `${payload}.${signature}`;
 }
 
 export function parseSessionCookieValue(value: string | undefined): SessionInfo | null {
   if (!value) return null;
-  if (value.includes("::")) {
-    const [usernameRaw, roleRaw] = value.split("::");
-    const username = normalizeUsername(usernameRaw ?? "");
-    const role = roleRaw?.trim();
-    if (!username || !role || !isAppRole(role)) return null;
-    return { username, role };
-  }
 
-  const legacyRole = value.trim();
-  if (!isAppRole(legacyRole)) return null;
-  const username = normalizeUsername(legacyRole);
-  return { username, role: legacyRole };
+  const [payload, signature, ...extra] = value.split(".");
+  if (!payload || !signature || extra.length > 0) return null;
+
+  const expected = signSessionPayload(payload);
+  const expectedBuffer = Buffer.from(expected);
+  const actualBuffer = Buffer.from(signature);
+  if (expectedBuffer.length !== actualBuffer.length || !timingSafeEqual(expectedBuffer, actualBuffer)) return null;
+
+  try {
+    const parsed = JSON.parse(base64UrlDecode(payload)) as Partial<SessionInfo>;
+    const username = normalizeUsername(String(parsed.username ?? ""));
+    const role = String(parsed.role ?? "");
+    if (!username || !isAppRole(role)) return null;
+    return { username, role };
+  } catch {
+    return null;
+  }
 }
+

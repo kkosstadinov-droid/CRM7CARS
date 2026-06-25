@@ -18,14 +18,23 @@ Web-based CRM for 7CARS operations: lead intake, contracting, vehicle sourcing, 
 
 ## Run
 
+Create a local `.env` file first:
+
 ```bash
-npm install
+DATABASE_URL="file:./dev.db"
+SEVENCARS_SESSION_SECRET="replace-with-a-long-random-secret"
+```
+
+Then install and run:
+
+```bash
+DATABASE_URL="file:./dev.db" npm install
 npm run dev
 ```
 
 ## Database Setup
 
-1. Copy `.env.example` to `.env`.
+1. Create `.env` with `DATABASE_URL` and `SEVENCARS_SESSION_SECRET`.
 2. Create Prisma client:
 
 ```bash
@@ -63,11 +72,7 @@ Required GitHub repository secret:
 - Reports and SLA/overdue monitoring
 - Mobile app shell (React Native or PWA)
 
-## Demo Login
+## Default Development Users
 
-- Admin / Admin
-- Sales / Sales
-- AccountManager / AccountManager
-- Logistics / Logistics
-- Service / Service
+When the user store is empty, the app seeds one account per role with lowercase development passwords matching the username. Change these passwords immediately in any shared or production environment.
 
