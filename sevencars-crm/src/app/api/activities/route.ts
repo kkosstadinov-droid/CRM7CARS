@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getCurrentSession } from "@/lib/session";
 import { createActivity, listActivities } from "@/lib/activities-store";
 
 type CreateActivityBody = {
@@ -10,6 +11,8 @@ type CreateActivityBody = {
 };
 
 export async function GET(request: Request) {
+  const session = await getCurrentSession();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { searchParams } = new URL(request.url);
   const ownerUsername = searchParams.get("ownerUsername")?.trim().toLowerCase() ?? "";
   const activities = await listActivities({
@@ -19,6 +22,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const session = await getCurrentSession();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
     const body = (await request.json()) as CreateActivityBody;
 
@@ -48,3 +53,4 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+

@@ -85,19 +85,9 @@ export function LoginForm() {
         {isLoading ? "Signing in..." : "Sign in"}
       </button>
 
-      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-700">
-        <p className="font-semibold">Demo accounts:</p>
-        <p>Admin / Admin</p>
-        <p>Boss / Boss</p>
-        <p>Sales / Sales</p>
-        <p>Showroom / Showroom</p>
-        <p>AccountManager / AccountManager</p>
-        <p>TeamLeadAM / TeamLeadAM</p>
-        <p>OperationManager / OperationManager</p>
-        <p>Logistics / Logistics (After Sales)</p>
-        <p>Service / Service</p>
-        <p>Insurance / Insurance</p>
-      </div>
+      <p className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-700">
+        Use the credentials provided by your CRM administrator.
+      </p>
     </form>
   );
 }

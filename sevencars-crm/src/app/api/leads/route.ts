@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getCurrentSession } from "@/lib/session";
 import { createLead, listLeads } from "@/lib/leads-store";
 import { sourceEnumToInput, sourceInputToEnum, splitFullName, splitVehicleRequest, type ContractPackage, type LeadDocument, type LeadHistoryEvent, type LeadNoteEntry, type MemoEvent, type MemoStatus, type MemoSubject, type RegistrationStatus, type ShowroomOwnership, type ShowroomPackage, type YesNo } from "@/lib/leads";
 
@@ -112,6 +113,8 @@ type CreateLeadBody = {
 };
 
 export async function GET(request: Request) {
+  const session = await getCurrentSession();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { searchParams } = new URL(request.url);
   const department = searchParams.get("department");
   const includeShowroom = searchParams.get("includeShowroom") === "1";
@@ -129,6 +132,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const session = await getCurrentSession();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
     const body = (await request.json()) as CreateLeadBody;
     const handoverDepartment = body.handoverDepartment === "showroom" ? "showroom" : "sales";
@@ -264,3 +269,4 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+

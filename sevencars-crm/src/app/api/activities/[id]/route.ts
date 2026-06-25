@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getCurrentSession } from "@/lib/session";
 import { deleteActivity, updateActivity } from "@/lib/activities-store";
 import type { ActivityDto } from "@/lib/activities";
 
@@ -11,6 +12,8 @@ type UpdateActivityBody = {
 };
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const session = await getCurrentSession();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
     const { id } = await params;
     const body = (await request.json()) as UpdateActivityBody;
@@ -36,6 +39,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 }
 
 export async function DELETE(_: Request, { params }: { params: Promise<{ id: string }> }) {
+  const session = await getCurrentSession();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
     const { id } = await params;
     const deleted = await deleteActivity(id);
@@ -48,3 +53,4 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+
