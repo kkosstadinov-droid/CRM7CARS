@@ -1,10 +1,18 @@
 import { NextResponse } from "next/server";
 import { createSessionCookieValue, validateCredentials } from "@/lib/auth";
+import { persistentStoreErrorResponse } from "@/lib/persistence";
 
 export async function POST(request: Request) {
   const body = (await request.json()) as { username?: string; password?: string };
 
-  const session = await validateCredentials(body.username ?? "", body.password ?? "");
+  let session;
+  try {
+    session = await validateCredentials(body.username ?? "", body.password ?? "");
+  } catch (error) {
+    const response = persistentStoreErrorResponse(error);
+    if (response) return response;
+    throw error;
+  }
 
   if (!session) {
     return NextResponse.json({ error: "Invalid credentials." }, { status: 401 });

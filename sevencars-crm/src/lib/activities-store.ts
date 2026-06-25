@@ -1,5 +1,6 @@
 import { del, get, list, put } from "@vercel/blob";
 import { hasBlobStore } from "@/lib/blob-json-store";
+import { assertPersistentStore } from "@/lib/persistence";
 import { prisma } from "@/lib/prisma";
 import type { ActivityDto } from "@/lib/activities";
 
@@ -117,6 +118,7 @@ async function ensureCrmActivityTable() {
 }
 
 async function ensureReady() {
+  assertPersistentStore();
   if (!bootstrapPromise) {
     bootstrapPromise = ensureCrmActivityTable();
   }

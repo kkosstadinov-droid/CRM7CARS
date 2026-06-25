@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentSession } from "@/lib/session";
+import { assertPersistentStore, persistentStoreErrorResponse } from "@/lib/persistence";
 import { createActivity, listActivities } from "@/lib/activities-store";
 
 type CreateActivityBody = {
@@ -13,6 +14,13 @@ type CreateActivityBody = {
 export async function GET(request: Request) {
   const session = await getCurrentSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  try {
+    assertPersistentStore();
+  } catch (error) {
+    const response = persistentStoreErrorResponse(error);
+    if (response) return response;
+    throw error;
+  }
   const { searchParams } = new URL(request.url);
   const ownerUsername = searchParams.get("ownerUsername")?.trim().toLowerCase() ?? "";
   const activities = await listActivities({
@@ -25,6 +33,7 @@ export async function POST(request: Request) {
   const session = await getCurrentSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
+    assertPersistentStore();
     const body = (await request.json()) as CreateActivityBody;
 
     const title = body.title?.trim() ?? "";
@@ -49,6 +58,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json(created, { status: 201 });
   } catch (error) {
+    const persistenceResponse = persistentStoreErrorResponse(error);
+    if (persistenceResponse) return persistenceResponse;
     const message = error instanceof Error && error.message ? error.message : "Failed to create activity.";
     return NextResponse.json({ error: message }, { status: 500 });
   }

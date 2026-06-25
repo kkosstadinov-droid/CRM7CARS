@@ -49,11 +49,48 @@ npx prisma migrate dev --name init
 
 ## Vercel Persistence
 
-For local development, leads continue to use SQLite via `DATABASE_URL`.
+For local development, leads and activities use SQLite via `DATABASE_URL`, while users can use `data/users.json`.
 
 Lead document uploads also work locally and are written to `public/uploads/lead-documents/`.
 
-For Vercel deployments, set `BLOB_READ_WRITE_TOKEN` so pipeline leads, activities, and uploaded lead documents are stored durably in Vercel Blob instead of the temporary `/tmp` filesystem. Without that token, lead document uploads are intentionally disabled in Vercel. Optionally override blob keys with `LEADS_BLOB_PATH` and `ACTIVITIES_BLOB_PATH`.
+### Required Vercel environment variables
+
+Production Vercel deployments must have durable storage configured before operators use the CRM:
+
+```text
+SEVENCARS_SESSION_SECRET=<long random secret>
+BLOB_READ_WRITE_TOKEN=<Vercel Blob read/write token>
+```
+
+With `BLOB_READ_WRITE_TOKEN`, pipeline leads, activities, users, and uploaded lead documents are stored durably in Vercel Blob. Without that token, CRM data APIs return `503` instead of writing to Vercel's temporary `/tmp` filesystem.
+
+Optional Blob key overrides:
+
+```text
+USERS_BLOB_PATH=crm/users.json
+LEADS_BLOB_PREFIX=crm/leads/
+ACTIVITIES_BLOB_PREFIX=crm/activities/
+```
+
+### Migrating local data to Vercel Blob
+
+After setting `BLOB_READ_WRITE_TOKEN` locally or in your shell, run:
+
+```bash
+npm run migrate:blob
+```
+
+The migration uploads:
+
+- `data/users.json` to `crm/users.json`
+- Prisma `CrmLead` rows from `dev.db` to `crm/leads/<id>.json`
+- Prisma `CrmActivity` rows, or legacy `data/activities.json`, to `crm/activities/<id>.json`
+
+Verify storage config locally with:
+
+```bash
+npm run storage:test
+```
 
 ## Auto Deploy
 
