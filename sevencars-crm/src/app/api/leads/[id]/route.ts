@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { getCurrentSession } from "@/lib/session";
 import { assertPersistentStore, persistentStoreErrorResponse } from "@/lib/persistence";
-import { deleteLead, updateLead } from "@/lib/leads-store";
+import { deleteLead, getLead, updateLead } from "@/lib/leads-store";
 import { sourceEnumToInput, sourceInputToEnum, splitFullName, splitVehicleRequest, stageToStatus, type ContractPackage, type LeadDocument, type LeadDto, type LeadHistoryEvent, type LeadNoteEntry, type LeadStage, type MemoEvent, type MemoStatus, type MemoSubject, type RegistrationStatus, type ShowroomOwnership, type ShowroomPackage, type YesNo } from "@/lib/leads";
+import { canDeleteLead, canViewLead, forbiddenLeadPatchFields, sanitizeLeadForRole } from "@/lib/permissions.mjs";
 
 type UpdateLeadBody = {
   fullName?: string;
@@ -16,6 +17,8 @@ type UpdateLeadBody = {
   handoverDepartment?: "sales" | "account" | "logistics" | "showroom";
   isFamily?: boolean;
   familyAt?: string;
+  salesOwner?: string;
+  assignedTo?: string;
   lastUpdatedBy?: string;
   car?: string;
   purchaseDate?: string;
@@ -126,6 +129,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
   const { id } = await params;
   const body = (await request.json()) as UpdateLeadBody;
+  const current = await getLead(id);
+  if (!current) return NextResponse.json({ error: "Lead not found." }, { status: 404 });
+  if (!canViewLead(session, current)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const isShowroomPayload = body.handoverDepartment === "showroom";
   const firstRegistrationDate = body.firstRegistrationDate?.trim();
 
@@ -149,6 +155,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (typeof body.lastUpdatedBy === "string") patch.lastUpdatedBy = body.lastUpdatedBy.trim();
   if (typeof body.familyAt === "string") patch.familyAt = body.familyAt.trim();
   if (typeof body.isFamily === "boolean") patch.isFamily = body.isFamily;
+  if (typeof body.salesOwner === "string") patch.salesOwner = body.salesOwner.trim();
+  if (typeof body.assignedTo === "string") patch.assignedTo = body.assignedTo.trim();
   if (typeof body.car === "string") patch.car = body.car.trim();
   if (typeof body.purchaseDate === "string") patch.purchaseDate = body.purchaseDate.trim();
   if (typeof body.am === "string") patch.am = body.am.trim();
@@ -262,11 +270,18 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     patch.vehicleRequest = [requestedBrand, requestedModel, requestedTrim].filter(Boolean).join(" ");
   }
 
+  patch.lastUpdatedBy = session.username;
+
+  const forbidden = forbiddenLeadPatchFields(session, patch, current);
+  if (forbidden.length > 0) {
+    return NextResponse.json({ error: "Forbidden fields for your role.", fields: forbidden }, { status: 403 });
+  }
+
   const updated = await updateLead(id, patch);
   if (!updated) {
     return NextResponse.json({ error: "Lead not found." }, { status: 404 });
   }
-  return NextResponse.json(updated);
+  return NextResponse.json(sanitizeLeadForRole(session, updated));
 }
 
 export async function DELETE(_: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -280,6 +295,9 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
     throw error;
   }
   const { id } = await params;
+  const current = await getLead(id);
+  if (!current) return NextResponse.json({ error: "Lead not found." }, { status: 404 });
+  if (!canViewLead(session, current) || !canDeleteLead(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const deleted = await deleteLead(id);
   if (!deleted) {
     return NextResponse.json({ error: "Lead not found." }, { status: 404 });

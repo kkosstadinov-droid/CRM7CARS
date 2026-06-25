@@ -3,6 +3,7 @@ import { getCurrentSession } from "@/lib/session";
 import { assertPersistentStore, persistentStoreErrorResponse } from "@/lib/persistence";
 import { createLead, listLeads } from "@/lib/leads-store";
 import { sourceEnumToInput, sourceInputToEnum, splitFullName, splitVehicleRequest, type ContractPackage, type LeadDocument, type LeadHistoryEvent, type LeadNoteEntry, type MemoEvent, type MemoStatus, type MemoSubject, type RegistrationStatus, type ShowroomOwnership, type ShowroomPackage, type YesNo } from "@/lib/leads";
+import { filterVisibleLeads } from "@/lib/permissions.mjs";
 
 type CreateLeadBody = {
   fullName?: string;
@@ -16,6 +17,8 @@ type CreateLeadBody = {
   handoverDepartment?: "sales" | "account" | "logistics" | "showroom";
   isFamily?: boolean;
   familyAt?: string;
+  salesOwner?: string;
+  assignedTo?: string;
   lastUpdatedBy?: string;
   car?: string;
   purchaseDate?: string;
@@ -136,7 +139,7 @@ export async function GET(request: Request) {
     customerType: customerType === "new" || customerType === "existing" ? customerType : undefined,
     limit,
   });
-  return NextResponse.json(leads);
+  return NextResponse.json(filterVisibleLeads(session, leads));
 }
 
 export async function POST(request: Request) {
@@ -174,7 +177,9 @@ export async function POST(request: Request) {
       handoverDepartment,
       isFamily: body.isFamily === true,
       familyAt: body.familyAt?.trim() ?? "",
-      lastUpdatedBy: body.lastUpdatedBy?.trim() ?? "",
+      salesOwner: session.role === "Sales" ? session.username : body.salesOwner?.trim() || body.assignedTo?.trim() || session.username,
+      assignedTo: session.role === "Sales" ? session.username : body.assignedTo?.trim() || body.salesOwner?.trim() || session.username,
+      lastUpdatedBy: session.username,
       car: body.car?.trim() ?? "",
       purchaseDate: body.purchaseDate?.trim() ?? "",
       am: body.am?.trim() ?? "",

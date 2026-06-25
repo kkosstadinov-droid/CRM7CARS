@@ -152,6 +152,8 @@ function normalizeLead(input: Partial<LeadDto> & Pick<LeadDto, "id">): LeadDto {
     handoverDepartment: normalizeDepartment(input.handoverDepartment),
     isFamily: input.isFamily === true,
     familyAt: input.familyAt ?? "",
+    salesOwner: input.salesOwner ?? input.assignedTo ?? input.lastUpdatedBy ?? "",
+    assignedTo: input.assignedTo ?? input.salesOwner ?? input.lastUpdatedBy ?? "",
     lastUpdatedBy: input.lastUpdatedBy ?? "",
     car: input.car ?? "",
     purchaseDate: input.purchaseDate ?? "",
@@ -495,6 +497,14 @@ export async function listLeads(options: ListLeadOptions = {}) {
   });
 
   return rows.map((row: LeadRow) => fromRow(row));
+}
+
+export async function getLead(id: string) {
+  await ensureReady();
+  if (hasBlobStore()) return readLeadFromBlob(id);
+
+  const row = await prisma.crmLead.findUnique({ where: { id } });
+  return row ? fromRow(row) : null;
 }
 
 export async function createLead(lead: Omit<LeadDto, "id" | "createdAt"> & { createdAt?: string }) {

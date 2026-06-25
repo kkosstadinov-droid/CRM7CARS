@@ -55,6 +55,8 @@ export type LeadDto = {
   handoverDepartment: "sales" | "account" | "logistics" | "showroom";
   isFamily: boolean;
   familyAt: string;
+  salesOwner: string;
+  assignedTo: string;
   lastUpdatedBy: string;
   car: string;
   purchaseDate: string;
