@@ -12,6 +12,7 @@
     "permissions:test": "node scripts/permissions-test.mjs",
     "audit:test": "node scripts/audit-log-test.mjs",
     "archive:test": "node scripts/archive-behavior-test.mjs",
+    "redirect:test": "node scripts/redirect-loop-test.mjs",
     "system:volume": "node scripts/system-volume-test.mjs",
     "migrate:blob": "node scripts/migrate-local-data-to-blob.mjs",
     "backup:export": "node scripts/export-crm-backup.mjs",

@@ -12,9 +12,6 @@ export function middleware(request: NextRequest) {
   }
 
   if (PUBLIC_PATHS.some((path) => pathname.startsWith(path))) {
-    if (pathname === "/login" && request.cookies.get("sevencars_session")?.value) {
-      return NextResponse.redirect(new URL("/", request.url));
-    }
     return NextResponse.next();
   }
 
