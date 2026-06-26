@@ -4,6 +4,7 @@ import { assertPersistentStore, persistentStoreErrorResponse } from "@/lib/persi
 import { deleteLead, getLead, updateLead } from "@/lib/leads-store";
 import { sourceEnumToInput, sourceInputToEnum, splitFullName, splitVehicleRequest, stageToStatus, type ContractPackage, type LeadDocument, type LeadDto, type LeadHistoryEvent, type LeadNoteEntry, type LeadStage, type MemoEvent, type MemoStatus, type MemoSubject, type RegistrationStatus, type ShowroomOwnership, type ShowroomPackage, type YesNo } from "@/lib/leads";
 import { canDeleteLead, canViewLead, forbiddenLeadPatchFields, sanitizeLeadForRole } from "@/lib/permissions.mjs";
+import { appendAuditEvent, summarizeAuditPatch } from "@/lib/audit-store.mjs";
 
 type UpdateLeadBody = {
   fullName?: string;
@@ -281,6 +282,17 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (!updated) {
     return NextResponse.json({ error: "Lead not found." }, { status: 404 });
   }
+  const changes = summarizeAuditPatch(current as unknown as Record<string, unknown>, patch as Record<string, unknown>);
+  await appendAuditEvent({
+    actor: session,
+    action: "lead.update",
+    entityType: "lead",
+    entityId: updated.id,
+    entityLabel: updated.fullName || updated.phone || updated.id,
+    summary: changes.length ? `Updated lead fields: ${changes.map((change) => change.field).join(", ")}` : "Updated lead",
+    changes,
+    metadata: { handoverDepartment: updated.handoverDepartment, stage: updated.stage },
+  });
   return NextResponse.json(sanitizeLeadForRole(session, updated));
 }
 
@@ -302,6 +314,16 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
   if (!deleted) {
     return NextResponse.json({ error: "Lead not found." }, { status: 404 });
   }
+  await appendAuditEvent({
+    actor: session,
+    action: "lead.delete",
+    entityType: "lead",
+    entityId: current.id,
+    entityLabel: current.fullName || current.phone || current.id,
+    summary: `Deleted lead ${current.fullName || current.phone || current.id}`,
+    changes: [],
+    metadata: { handoverDepartment: current.handoverDepartment, stage: current.stage },
+  });
   return NextResponse.json({ ok: true });
 }
 

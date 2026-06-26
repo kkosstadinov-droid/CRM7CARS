@@ -12,13 +12,28 @@ type ManagedUser = {
   mustChangePassword: boolean;
 };
 
+type AuditEvent = {
+  id: string;
+  at: string;
+  actorUsername: string;
+  actorRole: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  entityLabel: string;
+  summary: string;
+  changes: { field: string; from: unknown; to: unknown }[];
+};
+
 const roleOptions: AppRole[] = ["Admin", "Boss", "Sales", "Showroom", "AccountManager", "TeamLeadAM", "OperationManager", "Logistics", "Service", "Insurance"];
 const presetOptions: DashboardPreset[] = ["pipeline", "stats"];
 
 export function AdminDashboard({ activeUsername }: { activeUsername: string }) {
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [loading, setLoading] = useState(true);
+  const [auditLoading, setAuditLoading] = useState(true);
   const [error, setError] = useState("");
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [creating, setCreating] = useState({
     username: "",
     password: "",
@@ -41,9 +56,23 @@ export function AdminDashboard({ activeUsername }: { activeUsername: string }) {
     }
   }, []);
 
+  const loadAuditEvents = useCallback(async () => {
+    setAuditLoading(true);
+    try {
+      const response = await fetch("/api/audit-log?limit=50", { cache: "no-store" });
+      if (!response.ok) throw new Error();
+      setAuditEvents((await response.json()) as AuditEvent[]);
+    } catch {
+      setAuditEvents([]);
+    } finally {
+      setAuditLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadUsers();
-  }, [loadUsers]);
+    void loadAuditEvents();
+  }, [loadUsers, loadAuditEvents]);
 
   const sortedUsers = useMemo(() => [...users].sort((a, b) => a.username.localeCompare(b.username)), [users]);
 
@@ -61,6 +90,7 @@ export function AdminDashboard({ activeUsername }: { activeUsername: string }) {
     }
     setCreating({ username: "", password: "", role: "Sales", dashboardPreset: "pipeline" });
     await loadUsers();
+    await loadAuditEvents();
   }
 
   async function patchUser(username: string, patch: Partial<Pick<ManagedUser, "role" | "dashboardPreset" | "mustChangePassword">>) {
@@ -76,6 +106,7 @@ export function AdminDashboard({ activeUsername }: { activeUsername: string }) {
       return;
     }
     await loadUsers();
+    await loadAuditEvents();
   }
 
   async function removeUser(username: string) {
@@ -88,6 +119,7 @@ export function AdminDashboard({ activeUsername }: { activeUsername: string }) {
       return;
     }
     await loadUsers();
+    await loadAuditEvents();
   }
 
   async function resetPassword(username: string) {
@@ -109,6 +141,13 @@ export function AdminDashboard({ activeUsername }: { activeUsername: string }) {
     }
     setResetPasswordByUser((prev) => ({ ...prev, [username]: "" }));
     await loadUsers();
+    await loadAuditEvents();
+  }
+
+  function formatAuditDate(iso: string) {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return iso;
+    return new Intl.DateTimeFormat("bg-BG", { dateStyle: "short", timeStyle: "short", timeZone: "Europe/Sofia" }).format(date);
   }
 
   return (
@@ -222,6 +261,48 @@ export function AdminDashboard({ activeUsername }: { activeUsername: string }) {
                 ))}
               </tbody>
             </table>
+          </div>
+
+          <div className="rounded-lg border border-gray-200 p-3">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-semibold">Audit Log</p>
+                <p className="text-xs text-gray-500">Последните 50 действия: профили, lead промени, изтривания и документи.</p>
+              </div>
+              <button type="button" className="mini-btn" onClick={() => void loadAuditEvents()}>
+                Refresh
+              </button>
+            </div>
+            {auditLoading ? <p className="text-sm text-gray-600">Loading audit log...</p> : null}
+            {!auditLoading && auditEvents.length === 0 ? <p className="text-sm text-gray-600">Няма записани действия.</p> : null}
+            {auditEvents.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="brand-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Actor</th>
+                      <th>Action</th>
+                      <th>Entity</th>
+                      <th>Summary</th>
+                      <th>Changed Fields</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {auditEvents.map((event) => (
+                      <tr key={event.id}>
+                        <td>{formatAuditDate(event.at)}</td>
+                        <td>{event.actorUsername} ({event.actorRole})</td>
+                        <td>{event.action}</td>
+                        <td>{event.entityType}: {event.entityLabel || event.entityId}</td>
+                        <td>{event.summary}</td>
+                        <td>{event.changes.map((change) => change.field).join(", ") || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
           </div>
         </div>
       </section>

@@ -10,6 +10,7 @@
     "smoke": "node scripts/smoke-test.mjs",
     "storage:test": "node scripts/storage-config-test.mjs",
     "permissions:test": "node scripts/permissions-test.mjs",
+    "audit:test": "node scripts/audit-log-test.mjs",
     "migrate:blob": "node scripts/migrate-local-data-to-blob.mjs",
     "stress": "node scripts/stress-test.mjs",
     "verify": "npm run lint && npm run build",

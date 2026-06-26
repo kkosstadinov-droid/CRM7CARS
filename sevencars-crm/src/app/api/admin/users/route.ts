@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { createUser, listUsers, parseSessionCookieValue, type AppRole, type DashboardPreset } from "@/lib/auth";
+import { appendAuditEvent } from "@/lib/audit-store.mjs";
 import { NextResponse } from "next/server";
 import { canCreateUsers } from "@/lib/permissions.mjs";
 
@@ -40,6 +41,19 @@ export async function POST(request: Request) {
       password,
       role: body.role,
       dashboardPreset: body.dashboardPreset ?? "pipeline",
+    });
+    await appendAuditEvent({
+      actor: manager,
+      action: "user.create",
+      entityType: "user",
+      entityId: created.username,
+      entityLabel: created.username,
+      summary: `Created user ${created.username} (${created.role})`,
+      changes: [
+        { field: "role", from: null, to: created.role },
+        { field: "dashboardPreset", from: null, to: created.dashboardPreset },
+      ],
+      metadata: { mustChangePassword: created.mustChangePassword },
     });
     return NextResponse.json({
       username: created.username,

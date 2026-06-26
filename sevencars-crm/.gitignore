@@ -50,6 +50,7 @@ smoke*.log
 webpack*.log
 *.cookies
 data/leads*.json
+data/audit-log.json
 data/*.tmp
 public/uploads/
 

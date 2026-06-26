@@ -5,6 +5,7 @@ import path from "node:path";
 import { put } from "@vercel/blob";
 import type { LeadDocument } from "@/lib/leads";
 import { canSeeDocuments } from "@/lib/permissions.mjs";
+import { appendAuditEvent } from "@/lib/audit-store.mjs";
 
 export const runtime = "nodejs";
 
@@ -62,6 +63,17 @@ export async function POST(request: Request) {
       uploadedAt: timestamp,
       size: file.size,
     };
+
+    await appendAuditEvent({
+      actor: session,
+      action: "document.upload",
+      entityType: "lead",
+      entityId: leadId || "general",
+      entityLabel: file.name,
+      summary: `Uploaded document ${file.name}`,
+      changes: [],
+      metadata: { documentId: document.id, pathname: document.pathname, size: document.size },
+    });
 
     return NextResponse.json(document, { status: 201 });
   } catch (error) {

@@ -4,6 +4,7 @@ import { assertPersistentStore, persistentStoreErrorResponse } from "@/lib/persi
 import { createLead, listLeads } from "@/lib/leads-store";
 import { sourceEnumToInput, sourceInputToEnum, splitFullName, splitVehicleRequest, type ContractPackage, type LeadDocument, type LeadHistoryEvent, type LeadNoteEntry, type MemoEvent, type MemoStatus, type MemoSubject, type RegistrationStatus, type ShowroomOwnership, type ShowroomPackage, type YesNo } from "@/lib/leads";
 import { filterVisibleLeads } from "@/lib/permissions.mjs";
+import { appendAuditEvent } from "@/lib/audit-store.mjs";
 
 type CreateLeadBody = {
   fullName?: string;
@@ -275,6 +276,17 @@ export async function POST(request: Request) {
       source: sourceEnumToInput(sourceInputToEnum(body.source ?? "other")),
       stage: "New Lead",
       createdAt: body.createdAt?.trim() ?? new Date().toISOString(),
+    });
+
+    await appendAuditEvent({
+      actor: session,
+      action: "lead.create",
+      entityType: "lead",
+      entityId: created.id,
+      entityLabel: created.fullName || created.phone || created.id,
+      summary: `Created lead ${created.fullName || created.phone || created.id}`,
+      changes: [],
+      metadata: { handoverDepartment: created.handoverDepartment, stage: created.stage, source: created.source },
     });
 
     return NextResponse.json(created, { status: 201 });
