@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { del, get, list, put } from "@vercel/blob";
+import { get, list, put } from "@vercel/blob";
 import { hasBlobStore } from "@/lib/blob-json-store";
 import { assertPersistentStore } from "@/lib/persistence";
 import { prisma } from "@/lib/prisma";
@@ -249,6 +249,9 @@ function normalizeLead(input: Partial<LeadDto> & Pick<LeadDto, "id">): LeadDto {
     serviceTouchedAt: input.serviceTouchedAt ?? "",
     source: normalizeSource(input.source),
     stage: normalizeStage(input.stage),
+    archivedAt: typeof input.archivedAt === "string" ? input.archivedAt : undefined,
+    archivedBy: typeof input.archivedBy === "string" ? input.archivedBy : undefined,
+    archiveReason: typeof input.archiveReason === "string" ? input.archiveReason : undefined,
     createdAt: createdAtIso,
   };
 }
@@ -408,11 +411,12 @@ type ListLeadOptions = {
   department?: "sales" | "account" | "logistics" | "showroom";
   includeShowroom?: boolean;
   customerType?: "new" | "existing";
+  includeArchived?: boolean;
   limit?: number;
 };
 
 function applyListFilters(leads: LeadDto[], options: ListLeadOptions) {
-  let filtered = leads;
+  let filtered = options.includeArchived ? leads : leads.filter((lead) => !lead.archivedAt);
 
   if (options.customerType === "new") {
     filtered = filtered.filter((lead) => !lead.isFamily);
@@ -496,7 +500,7 @@ export async function listLeads(options: ListLeadOptions = {}) {
     ...(options.limit && options.limit > 0 ? { take: options.limit } : {}),
   });
 
-  return rows.map((row: LeadRow) => fromRow(row));
+  return applyListFilters(rows.map((row: LeadRow) => fromRow(row)), { ...options, department: undefined, customerType: undefined, includeShowroom: undefined });
 }
 
 export async function getLead(id: string) {
@@ -641,20 +645,20 @@ export async function updateLead(id: string, patch: Partial<Omit<LeadDto, "id">>
   return merged;
 }
 
-export async function deleteLead(id: string) {
+export async function archiveLead(id: string, actor = "system", reason = "Deleted from CRM UI") {
   await ensureReady();
+  const current = await getLead(id);
+  if (!current) return null;
+  if (current.archivedAt) return current;
+  return updateLead(id, {
+    archivedAt: new Date().toISOString(),
+    archivedBy: actor,
+    archiveReason: reason,
+    lastUpdatedBy: actor,
+  });
+}
 
-  if (hasBlobStore()) {
-    const current = await readLeadFromBlob(id);
-    if (!current) return false;
-    await del(leadBlobPath(id));
-    return true;
-  }
-
-  try {
-    await prisma.crmLead.delete({ where: { id } });
-    return true;
-  } catch {
-    return false;
-  }
+export async function deleteLead(id: string) {
+  const archived = await archiveLead(id);
+  return Boolean(archived);
 }

@@ -16,6 +16,8 @@ export type AppUser = {
   createdAt: string;
   updatedAt: string;
   mustChangePassword: boolean;
+  deactivatedAt?: string;
+  deactivatedBy?: string;
 };
 
 export type SessionInfo = {
@@ -146,7 +148,7 @@ async function readUsers() {
       const u = user as Partial<AppUser>;
       const role = u.role && isAppRole(u.role) ? u.role : "Sales";
       const username = normalizeUsername(String(u.username ?? ""));
-      return {
+      const normalized: AppUser = {
         username,
         password: String(u.password ?? username),
         role,
@@ -154,7 +156,10 @@ async function readUsers() {
         createdAt: typeof u.createdAt === "string" ? u.createdAt : new Date().toISOString(),
         updatedAt: typeof u.updatedAt === "string" ? u.updatedAt : new Date().toISOString(),
         mustChangePassword: Boolean(u.mustChangePassword),
-      } satisfies AppUser;
+      };
+      if (typeof u.deactivatedAt === "string") normalized.deactivatedAt = u.deactivatedAt;
+      if (typeof u.deactivatedBy === "string") normalized.deactivatedBy = u.deactivatedBy;
+      return normalized;
     })
     .filter((u) => !!u.username);
 }
@@ -238,13 +243,23 @@ export async function resetUserPassword(username: string, nextPassword: string) 
   return users[idx];
 }
 
-export async function deleteUser(username: string) {
+export async function deactivateUser(username: string, actor = "system") {
   const users = await readUsers();
   const normalized = normalizeUsername(username);
-  const next = users.filter((user) => user.username !== normalized);
-  if (next.length === users.length) return false;
-  await writeUsers(next);
-  return true;
+  const idx = users.findIndex((user) => user.username === normalized);
+  if (idx === -1) return null;
+  users[idx] = {
+    ...users[idx],
+    deactivatedAt: users[idx].deactivatedAt ?? new Date().toISOString(),
+    deactivatedBy: users[idx].deactivatedBy ?? actor,
+    updatedAt: new Date().toISOString(),
+  };
+  await writeUsers(users);
+  return users[idx];
+}
+
+export async function deleteUser(username: string) {
+  return Boolean(await deactivateUser(username));
 }
 
 export async function changeOwnPassword(username: string, currentPassword: string, nextPassword: string) {
@@ -265,7 +280,7 @@ export async function changeOwnPassword(username: string, currentPassword: strin
 
 export async function validateCredentials(username: string, password: string): Promise<(SessionInfo & { mustChangePassword: boolean; dashboardPreset: DashboardPreset }) | null> {
   const user = await getUser(username);
-  if (!user) return null;
+  if (!user || user.deactivatedAt) return null;
   if (!(await verifyPassword(user.password, password))) return null;
   if (!isPasswordHash(user.password)) {
     await resetUserPassword(user.username, password);

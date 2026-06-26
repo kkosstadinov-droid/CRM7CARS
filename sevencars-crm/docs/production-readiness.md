@@ -38,7 +38,36 @@ Dry run:
 npm run backup:export -- --dry-run
 ```
 
-The backup JSON includes users, leads, activities, and audit log counts. Backup output is local and gitignored under `backups/`.
+Restore validation:
+
+```bash
+npm run backup:restore-test
+```
+
+The backup JSON includes users, usersRestore, leads, activities, and audit log counts. Backup output is local and gitignored under `backups/`. If private Blob user hashes are not available to the backup runner, `usersRestore` falls back to a safe emergency reset policy: temporary password equals username and `mustChangePassword=true`.
+
+## Data/privacy and delete policy
+
+- Leads are archived, not physically deleted, when a manager deletes them from the UI/API.
+- Archived leads are hidden from normal lead lists by default but remain in backups and audit history.
+- Users are deactivated, not physically deleted, when removed from Admin; deactivated users cannot log in.
+- Audit log records create/update/archive/password-reset operations and should be retained for accountability.
+- Sales users may only see assigned/owned leads.
+- Sales and other non-management roles must not see Admin users or Audit Log.
+- Documents are visible only to permitted management/account roles according to the permission matrix.
+- Before entering real customer data, use non-real sample data for tester onboarding.
+
+## Tester handoff checklist
+
+Before giving access to internal testers:
+
+1. Confirm `npm run production:check` passes against production.
+2. Confirm `npm run backup:export` and `npm run backup:restore-test` pass.
+3. Tell testers to use placeholder accounts only for test data.
+4. Tell testers not to enter real EGN/personal addresses until real usernames/passwords are finalized.
+5. Ask testers to report role/permission surprises immediately.
+6. Keep daily backup job enabled during testing.
+7. Revoke any old Vercel token visible in the Vercel dashboard.
 
 ## Postgres migration readiness
 

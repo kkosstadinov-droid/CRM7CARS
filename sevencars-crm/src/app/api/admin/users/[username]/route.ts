@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { deleteUser, listUsers, parseSessionCookieValue, resetUserPassword, type AppRole, type DashboardPreset, updateUser } from "@/lib/auth";
+import { deactivateUser, listUsers, parseSessionCookieValue, resetUserPassword, type AppRole, type DashboardPreset, updateUser } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { canCreateUsers } from "@/lib/permissions.mjs";
 import { appendAuditEvent, summarizeAuditPatch } from "@/lib/audit-store.mjs";
@@ -56,18 +56,22 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ usernam
   if (target.username === manager.username) {
     return NextResponse.json({ error: "User manager cannot delete own account." }, { status: 400 });
   }
-  await deleteUser(target.username);
+  const archived = await deactivateUser(target.username, manager.username);
+  if (!archived) return NextResponse.json({ error: "User not found." }, { status: 404 });
   await appendAuditEvent({
     actor: manager,
-    action: "user.delete",
+    action: "user.archive",
     entityType: "user",
     entityId: target.username,
     entityLabel: target.username,
-    summary: `Deleted user ${target.username} (${target.role})`,
-    changes: [],
+    summary: `Archived user ${target.username} (${target.role})`,
+    changes: [
+      { field: "deactivatedAt", from: null, to: archived.deactivatedAt ?? null },
+      { field: "deactivatedBy", from: null, to: archived.deactivatedBy ?? manager.username },
+    ],
     metadata: { role: target.role, dashboardPreset: target.dashboardPreset },
   });
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, archived: true });
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ username: string }> }) {

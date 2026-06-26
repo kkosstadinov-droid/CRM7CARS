@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentSession } from "@/lib/session";
 import { assertPersistentStore, persistentStoreErrorResponse } from "@/lib/persistence";
-import { deleteLead, getLead, updateLead } from "@/lib/leads-store";
+import { archiveLead, getLead, updateLead } from "@/lib/leads-store";
 import { sourceEnumToInput, sourceInputToEnum, splitFullName, splitVehicleRequest, stageToStatus, type ContractPackage, type LeadDocument, type LeadDto, type LeadHistoryEvent, type LeadNoteEntry, type LeadStage, type MemoEvent, type MemoStatus, type MemoSubject, type RegistrationStatus, type ShowroomOwnership, type ShowroomPackage, type YesNo } from "@/lib/leads";
 import { canDeleteLead, canViewLead, forbiddenLeadPatchFields, sanitizeLeadForRole } from "@/lib/permissions.mjs";
 import { appendAuditEvent, summarizeAuditPatch } from "@/lib/audit-store.mjs";
@@ -310,20 +310,23 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
   const current = await getLead(id);
   if (!current) return NextResponse.json({ error: "Lead not found." }, { status: 404 });
   if (!canViewLead(session, current) || !canDeleteLead(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  const deleted = await deleteLead(id);
-  if (!deleted) {
+  const archived = await archiveLead(id, session.username, "Deleted from CRM UI");
+  if (!archived) {
     return NextResponse.json({ error: "Lead not found." }, { status: 404 });
   }
   await appendAuditEvent({
     actor: session,
-    action: "lead.delete",
+    action: "lead.archive",
     entityType: "lead",
     entityId: current.id,
     entityLabel: current.fullName || current.phone || current.id,
-    summary: `Deleted lead ${current.fullName || current.phone || current.id}`,
-    changes: [],
+    summary: `Archived lead ${current.fullName || current.phone || current.id}`,
+    changes: [
+      { field: "archivedAt", from: null, to: archived.archivedAt ?? null },
+      { field: "archivedBy", from: null, to: archived.archivedBy ?? session.username },
+    ],
     metadata: { handoverDepartment: current.handoverDepartment, stage: current.stage },
   });
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, archived: true });
 }
 

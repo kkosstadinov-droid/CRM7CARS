@@ -152,6 +152,9 @@ export type LeadDto = {
   serviceTouchedAt: string;
   source: LeadSourceInput;
   stage: LeadStage;
+  archivedAt?: string;
+  archivedBy?: string;
+  archiveReason?: string;
   createdAt: string;
 };
 

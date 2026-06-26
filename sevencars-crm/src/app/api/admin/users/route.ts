@@ -22,6 +22,8 @@ export async function GET() {
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
       mustChangePassword: user.mustChangePassword,
+      deactivatedAt: user.deactivatedAt,
+      deactivatedBy: user.deactivatedBy,
     })),
   );
 }

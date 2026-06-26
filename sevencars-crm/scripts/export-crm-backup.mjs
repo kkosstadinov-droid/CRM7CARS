@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { hasBlobStore, readJsonBlob } from "../src/lib/blob-json-store.mjs";
 
 const args = new Set(process.argv.slice(2));
 const dryRun = args.has("--dry-run");
@@ -7,6 +8,7 @@ const baseUrl = process.env.BASE_URL || "https://sevencars-crm.vercel.app";
 const username = process.env.CRM_BACKUP_USERNAME || process.env.CRM_ADMIN_USERNAME || "admin";
 const password = process.env.CRM_BACKUP_PASSWORD || process.env.CRM_ADMIN_PASSWORD || "admin";
 const outputDir = process.env.CRM_BACKUP_DIR || path.join(process.cwd(), "backups");
+const usersBlobPath = process.env.USERS_BLOB_PATH?.trim() || "crm/users.json";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -73,16 +75,40 @@ const [users, leads, activities, auditLog] = await Promise.all([
   getJson("/api/audit-log?limit=10000", cookie),
 ]);
 
+let usersRestore = null;
+let usersRestoreSource = "unavailable";
+if (hasBlobStore()) {
+  const rawUsers = await readJsonBlob(usersBlobPath, []);
+  if (Array.isArray(rawUsers.value) && rawUsers.value.length > 0) {
+    usersRestore = rawUsers.value;
+    usersRestoreSource = `blob:${usersBlobPath}`;
+  }
+}
+if (!Array.isArray(usersRestore) || usersRestore.length === 0) {
+  usersRestore = Array.isArray(users)
+    ? users.map((user) => ({
+        ...user,
+        password: user.username,
+        mustChangePassword: true,
+        restoredPasswordPolicy: "temporary-password-equals-username",
+      }))
+    : [];
+  usersRestoreSource = "api-public-users-with-temporary-password-reset-policy";
+}
+
 const backup = {
   exportedAt: new Date().toISOString(),
   baseUrl,
   counts: {
     users: count(users),
+    usersRestore: count(usersRestore),
     leads: count(leads),
     activities: count(activities),
     auditLog: count(auditLog),
   },
   users,
+  usersRestore,
+  usersRestoreSource,
   leads,
   activities,
   auditLog,
