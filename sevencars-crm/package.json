@@ -11,7 +11,9 @@
     "storage:test": "node scripts/storage-config-test.mjs",
     "permissions:test": "node scripts/permissions-test.mjs",
     "audit:test": "node scripts/audit-log-test.mjs",
+    "system:volume": "node scripts/system-volume-test.mjs",
     "migrate:blob": "node scripts/migrate-local-data-to-blob.mjs",
+    "backup:export": "node scripts/export-crm-backup.mjs",
     "stress": "node scripts/stress-test.mjs",
     "verify": "npm run lint && npm run build",
     "postinstall": "prisma generate"

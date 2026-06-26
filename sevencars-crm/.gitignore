@@ -52,6 +52,7 @@ webpack*.log
 data/leads*.json
 data/audit-log.json
 data/*.tmp
+backups/
 public/uploads/
 
 # typescript
