@@ -48,13 +48,13 @@ export async function readJsonBlob<T>(pathname: string, fallback: T | Factory<T>
   }
 }
 
-export async function writeJsonBlob<T>(pathname: string, value: T, etag?: string | null) {
+export async function writeJsonBlob<T>(pathname: string, value: T, _etag?: string | null) {
+  void _etag;
   const uploaded = await put(pathname, JSON.stringify(value, null, 2), {
     access: "private",
     addRandomSuffix: false,
     allowOverwrite: true,
     contentType: "application/json; charset=utf-8",
-    ...(etag ? { ifMatch: etag } : {}),
   });
 
   return uploaded.etag;
